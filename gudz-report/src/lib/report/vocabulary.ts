@@ -8,15 +8,17 @@
  * will be misread when nobody is there to explain it.
  *
  *   **Current SOH**     — Healthy Master's own available stock, right now.
- *   **GRN**             — what the customer recorded receiving, from the ERP's
- *                         `customer_grn` register.
+ *   **GRN**             — goods received by the marketplace, taken from the
+ *                         quantity invoiced to them in that month.
  *   **Sales Quantity**  — what the marketplace reported selling, that month.
  *
  * Two things this report refuses to claim:
  *
- *  - **GRN is not the sales order.** `orderedQuantity` is what was invoiced; a
- *    GRN is what the marketplace booked in at their end. Relabelling one as the
- *    other would answer a different question while looking right.
+ *  - **GRN is currently the invoiced quantity**, not a receipt the marketplace
+ *    confirmed. The ERP's `customer_grn` register is the stricter answer and is
+ *    empty in production, so the report uses what exists and `report/grn.ts`
+ *    keeps the swap to one call. Where the two eventually differ, believe the
+ *    register.
  *  - **Current SOH is not historical SOH.** Stock at the end of a past month
  *    would have to be replayed from a ledger with a known sync backlog. The
  *    live position is shown, labelled as live, and month-end stock is reported
@@ -41,10 +43,9 @@ export const CURRENT_SOH = {
 
 export const GRN = {
   label: "GRN",
-  source: "ERP customer GRN",
+  source: "ERP B2B sales orders",
   description:
-    "What the customer recorded receiving, from the ERP customer GRN register. Not the invoiced quantity.",
-  awaiting: "Awaiting customer GRN",
+    "Quantity invoiced to the marketplace that month, from ERP B2B sales orders. Drafts and cancellations excluded.",
 } as const;
 
 export const SALES_QUANTITY = {
@@ -69,7 +70,6 @@ export type MappingStatus = keyof typeof MAPPING_LABELS;
 /** Per-marketplace GRN standing, in the words the panel uses. */
 export const GRN_STATE_LABELS: Record<string, string> = {
   available: "GRN available",
-  awaiting: GRN.awaiting,
   notConfigured: "ERP not configured",
   unavailable: "ERP unavailable",
 };

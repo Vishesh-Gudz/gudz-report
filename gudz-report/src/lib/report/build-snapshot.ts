@@ -6,14 +6,9 @@ import { getConvexClient } from "../convex/server";
 import { reportingPeriodFromDays } from "../dates/reporting-period";
 import { getErpClient } from "../erp";
 import { getCatalogSnapshot } from "../erp/catalog-cache";
-import {
-  emptyGrnResult,
-  fetchCustomerGrn,
-  type CustomerGrnResult,
-} from "../erp/customer-grn";
 import { normalizeGstin } from "../erp/gstin";
 import { importMarketplaceSheet } from "../excel/workbook";
-import { fetchReportLines } from "./erp-lines";
+import { emptyGrnResult, fetchGrnFromSalesOrders, type GrnResult } from "./grn";
 import { aggregateMonthly } from "./monthly";
 import {
   CatalogIndex,
@@ -66,8 +61,8 @@ interface DataQualityNote {
   detail: string;
 }
 
-const GRN_AWAITING =
-  "No customer GRN has been raised in the ERP for this period, so received quantities are not available. The column shows a dash rather than zero, which would claim a GRN was recorded and found nothing.";
+const GRN_NOT_CONFIGURED =
+  "No ERP customer is configured for this marketplace, so goods received cannot be attributed to it.";
 
 export async function buildSnapshot(options: BuildOptions): Promise<void> {
   const { data, fileName, sheets, year, send } = options;
@@ -162,55 +157,32 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
 
       const aggregate = aggregateMonthly(mapped?.rows ?? [], confirmedSkus);
 
-      // ── ERP: which customers is this marketplace, and what did they receive
+      // ── ERP: goods received for this marketplace, in its own window
       let erpState = "notConfigured";
-      let erpMessage: string | null =
-        "No ERP customer is configured for this marketplace.";
-      let grn: CustomerGrnResult = emptyGrnResult();
+      let erpMessage: string | null = GRN_NOT_CONFIGURED;
+      let grn: GrnResult = emptyGrnResult();
       let grnState = "notConfigured";
-      let grnMessage: string | null = "No ERP customer is configured for this marketplace.";
+      let grnMessage: string | null = GRN_NOT_CONFIGURED;
 
       if (gstins.length > 0 && period && catalog) {
         send({ type: "sheet", sheet, marketplace, stage: "erp" });
-        try {
-          const customerIds = new Set<string>();
-          for (const gstin of gstins) {
-            const lines = await fetchReportLines(getErpClient(), {
-              period,
-              customerGstin: gstin,
-            });
-            for (const line of lines.lines) {
-              if (line.customerId) customerIds.add(line.customerId);
-            }
-          }
+        grn = await fetchGrnFromSalesOrders(getErpClient(), {
+          period,
+          customerGstins: gstins,
+        });
 
+        if (!grn.available) {
+          erpState = "unavailable";
+          erpMessage = grn.error;
+          grnState = "unavailable";
+          grnMessage = grn.error;
+        } else {
           erpState = "reconciled";
           erpMessage = null;
+          grnState = "available";
+          grnMessage = null;
+          anyGrn = anyGrn || grn.byItemMonth.size > 0;
           reconciled.push(marketplace);
-
-          grn = await fetchCustomerGrn(getErpClient(), {
-            fromDay: period.fromDay,
-            toDay: period.toDay,
-            customerIds: [...customerIds],
-          });
-
-          if (!grn.available) {
-            grnState = "unavailable";
-            grnMessage = grn.error;
-          } else if (grn.byItemMonth.size === 0) {
-            grnState = "awaiting";
-            grnMessage = GRN_AWAITING;
-          } else {
-            grnState = "available";
-            grnMessage = null;
-            anyGrn = true;
-          }
-        } catch (cause) {
-          erpState = "unavailable";
-          erpMessage =
-            cause instanceof Error ? cause.message : "The ERP could not be reached.";
-          grnState = "unavailable";
-          grnMessage = erpMessage;
         }
       } else if (gstins.length === 0) {
         notConfigured.push(marketplace);
@@ -219,10 +191,10 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       const rows: Omit<SnapshotRowInput, "currentSoh">[] = aggregate.rows.map((entry) => {
         const month = entry.month ?? "undated";
         const received =
-          entry.erpItemId && grn.byItemMonth.get(`${entry.erpItemId}::${month}`);
+          entry.erpItemId ? grn.byItemMonth.get(`${entry.erpItemId}::${month}`) : undefined;
 
         if (entry.erpItemId) erpItemIds.add(entry.erpItemId);
-        if (received) grnQuantity += received.receivedQuantity;
+        if (received) grnQuantity += received.quantity;
 
         return {
           marketplace,
@@ -232,9 +204,9 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           ean: entry.ean,
           marketplaceItemId: entry.marketplaceItemId,
           erpItemId: entry.erpItemId,
-          // Null, never zero: a dash says no GRN exists; a zero would say one
-          // was raised and recorded nothing.
-          grn: received ? received.receivedQuantity : null,
+          // Null, never zero. A dash says nothing was received for this
+          // product that month; a zero would say a receipt recorded none.
+          grn: received ? received.quantity : null,
           salesQuantity: entry.salesQuantity,
           salesValue: entry.salesValue,
           // Columns the business asked for with no source behind them yet.
@@ -247,7 +219,48 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
         };
       });
 
-      pending.push({ marketplace, rows });
+      // Products invoiced to this marketplace that its report never lists.
+      //
+      // Without these the GRN total silently under-reports: the ERP shipped 41
+      // SKUs to Blinkit and the sheet names 16, so two thirds of the goods
+      // received would have no row to sit on. They carry no sales — the
+      // marketplace reported none — and that zero is a real measurement rather
+      // than a gap.
+      const claimed = new Set(
+        aggregate.rows
+          .filter((entry) => entry.erpItemId)
+          .map((entry) => `${entry.erpItemId}::${entry.month ?? "undated"}`),
+      );
+
+      const grnOnly: Omit<SnapshotRowInput, "currentSoh">[] = [];
+      for (const [key, entry] of grn.byItemMonth) {
+        if (claimed.has(key)) continue;
+
+        erpItemIds.add(entry.itemId);
+        grnQuantity += entry.quantity;
+
+        const item = catalog?.itemForSku(entry.itemSku) ?? null;
+        grnOnly.push({
+          marketplace,
+          month: entry.month,
+          productName: item?.name ?? entry.itemSku,
+          sku: entry.itemSku,
+          ean: item?.barcode ?? null,
+          marketplaceItemId: null,
+          erpItemId: entry.itemId,
+          grn: entry.quantity,
+          salesQuantity: 0,
+          salesValue: 0,
+          damage: 0,
+          returned: 0,
+          mappingStatus: "matched",
+          mappingReason:
+            "Invoiced to this marketplace in this month. The marketplace report does not list it.",
+          sourceRows: 0,
+        });
+      }
+
+      pending.push({ marketplace, rows: [...rows, ...grnOnly] });
 
       if (convex && snapshotId) {
         await convex.mutation(anyApi.snapshots.addMarketplace as never, {
@@ -274,7 +287,7 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
 
       marketplaceNames.push(marketplace);
       if (period) periods.push({ from: period.fromDay, to: period.toDay });
-      totalRows += rows.length;
+      totalRows += rows.length + grnOnly.length;
       totalProducts += aggregate.distinctProducts;
       totalSalesQuantity += aggregate.salesQuantity;
       totalSalesValue += aggregate.salesValue;
@@ -395,13 +408,15 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
     anyGrn
       ? {
           state: "ok",
-          title: "Customer GRN available",
-          detail: "Received quantities were read from the ERP customer GRN register.",
+          title: `GRN read for ${reconciled.join(", ")}`,
+          detail:
+            "Goods received is the quantity invoiced to the marketplace in each month, from ERP B2B sales orders. Draft and cancelled orders are excluded.",
         }
       : {
-          state: "absent",
-          title: "Awaiting customer GRN",
-          detail: GRN_AWAITING,
+          state: "warn",
+          title: "GRN unavailable",
+          detail:
+            "No ERP customer is configured for the marketplaces in this report, so goods received cannot be attributed.",
         },
   );
 

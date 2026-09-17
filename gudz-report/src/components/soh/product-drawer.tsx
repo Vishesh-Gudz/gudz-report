@@ -125,18 +125,7 @@ export function ProductDrawer({
           <Field label={CURRENT_SOH.label} value={<Figure value={row.currentSoh} />} />
           <Field
             label={GRN.label}
-            value={
-              row.grn === null ? (
-                <span className="flex items-baseline justify-end gap-2">
-                  <span className="text-[11px] font-normal text-zinc-400">
-                    {GRN.awaiting}
-                  </span>
-                  <span className="text-zinc-400">—</span>
-                </span>
-              ) : (
-                num.format(row.grn)
-              )
-            }
+            value={<Figure value={row.grn} />}
           />
           <Field label={SALES_QUANTITY.label} value={num.format(row.salesQuantity)} />
           <Field label="Sales value" value={inr.format(row.salesValue)} />

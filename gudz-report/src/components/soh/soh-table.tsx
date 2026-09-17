@@ -155,7 +155,12 @@ const columns = helper.columns([
   }),
   helper.accessor("grn", {
     header: GRN.label,
-    cell: (info) => <Figure value={info.getValue()} title={GRN.awaiting} />,
+    cell: (info) => (
+      <Figure
+        value={info.getValue()}
+        title="Nothing was invoiced for this product in this month"
+      />
+    ),
   }),
   helper.accessor("salesQuantity", {
     header: SALES_QUANTITY.label,
@@ -456,7 +461,7 @@ export function SohTable({
                   <Figure value={totals.currentSoh} />
                 </td>
                 <td className="px-3 py-1.5 text-right">
-                  <Figure value={totals.grn} title={GRN.awaiting} />
+                  <Figure value={totals.grn} />
                 </td>
                 <td className="px-3 py-1.5 text-right">{num.format(totals.salesQuantity)}</td>
                 <td className="px-3 py-1.5 text-right">{num.format(totals.damage)}</td>

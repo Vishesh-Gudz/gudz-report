@@ -76,7 +76,6 @@ export function SummaryStrip({
       <Metric
         label={GRN.label}
         value={totals.grn === null ? "—" : num.format(totals.grn)}
-        detail={totals.grn === null ? GRN.awaiting : undefined}
         title={GRN.description}
       />
       <Metric

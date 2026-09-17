@@ -146,6 +146,8 @@ describe("the exported file", () => {
   });
 
   test("an absent GRN exports as a dash, never as zero", () => {
+    // Nothing was invoiced for this product that month. A zero would say a
+    // quantity was recorded and it was none.
     const cells = exportRow(snapshotRow({ grn: null }));
     expect(cells[EXPORT_COLUMNS.indexOf("GRN")]).toBe(ABSENT);
   });
@@ -154,6 +156,11 @@ describe("the exported file", () => {
     // The distinction the dash exists to preserve.
     const cells = exportRow(snapshotRow({ grn: 0 }));
     expect(cells[EXPORT_COLUMNS.indexOf("GRN")]).toBe(0);
+  });
+
+  test("a real GRN exports as its number", () => {
+    const cells = exportRow(snapshotRow({ grn: 4_403 }));
+    expect(cells[EXPORT_COLUMNS.indexOf("GRN")]).toBe(4_403);
   });
 
   test("absent stock exports as a dash", () => {
