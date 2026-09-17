@@ -1,0 +1,18 @@
+# Which dependencies are allowed to run install-time build scripts.
+#
+# pnpm blocks these by default: a postinstall script is arbitrary code from a
+# transitive dependency, so each one is an explicit decision rather than a
+# default.
+#
+# esbuild — required. The Convex CLI bundles `convex/**` with esbuild on every
+# `convex dev` and `convex deploy`; without its platform binary the bundler
+# cannot run and no Convex function can be pushed.
+#
+# sharp / unrs-resolver — left disabled. sharp only accelerates Next's image
+# optimizer (it falls back to a slower path), and unrs-resolver is a native
+# speedup for ESLint's resolver. Neither is needed for this project to build or
+# run correctly, so neither earns the right to execute install-time code.
+allowBuilds:
+  esbuild: true
+  sharp: false
+  unrs-resolver: false
