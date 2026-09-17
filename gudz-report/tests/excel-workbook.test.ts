@@ -158,6 +158,52 @@ describe("declared date modes", () => {
   });
 });
 
+/**
+ * Zepto's date column was already damaged when the file reached us.
+ *
+ * Half its rows are `DD-MM-YYYY` text and half are serials, and the split falls
+ * exactly on the twelfth of the month: every text value has a day of 13 or
+ * above, every serial a day of 8 or below. Something opened the file under a
+ * month-first locale, converted the values that happened to parse, and left the
+ * rest as text. 27,143 rows — 35% of the sheet — were dated by a transposed
+ * day and month, which spread a June-to-August sheet across all twelve months
+ * and widened the ERP window that GRN is fetched over.
+ */
+describe("a date column coerced under the wrong locale", () => {
+  const swapped = { textFormat: "DD-MM-YYYY", serialsCoercedMonthFirst: true } as const;
+
+  test("a transposed serial is put back", () => {
+    // Serial 46028 reads as 6 January; the sheet meant 1 June.
+    expect(toCalendarDateWithMode(46028, "cell", swapped)).toBe("2026-06-01");
+  });
+
+  test("text in the same column is untouched, because it escaped the coercion", () => {
+    expect(toCalendarDateWithMode("13-06-2026", "cell", swapped)).toBe("2026-06-13");
+  });
+
+  test("a serial that could not have been coerced is left alone", () => {
+    // Day 27 — month-first parsing would have rejected `06-27-2026` and left it
+    // as text, so this serial was always a real date.
+    expect(toCalendarDateWithMode(46230, "cell", swapped)).toBe(
+      toCalendarDateWithMode(46230, "cell", { textFormat: "DD-MM-YYYY" }),
+    );
+  });
+
+  test("a sheet that did not declare the coercion keeps its serials as they are", () => {
+    expect(toCalendarDateWithMode(46028, "cell", { textFormat: "DD-MM-YYYY" })).toBe(
+      "2026-01-06",
+    );
+  });
+
+  test("only Zepto declares it", () => {
+    expect(
+      MARKETPLACE_PROFILES.filter((profile) => profile.serialsCoercedMonthFirst).map(
+        (profile) => profile.marketplace,
+      ),
+    ).toEqual(["zepto"]);
+  });
+});
+
 describe("the Master sheet as a join table", () => {
   const rows = [
     Object.fromEntries(MASTER_ROWS[1]!.map((value, index) => [MASTER_ROWS[0]![index], value])),
@@ -221,7 +267,9 @@ describe("importing a chosen sheet", () => {
     ],
     Zepto: [
       ["Sales Date", "SKU ID", "SKU Name", "Quantity", "GMV"],
-      [serial(2026, 6, 1), "zep-a", "Ragi Chips", 3, 450],
+      // 1 June, stored transposed as 6 January — how the real sheet holds every
+      // date whose day is 12 or below. See the locale-coercion tests above.
+      [serial(2026, 1, 6), "zep-a", "Ragi Chips", 3, 450],
       ["13-06-2026", "zep-b", "Palak Chips", 4, 600],
       ["not a date", "zep-b", "Palak Chips", 1, 150],
     ],

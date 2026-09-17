@@ -186,6 +186,7 @@ export function importMarketplaceSheet(
       year: options.year ?? null,
       textFormat: profile.textDateFormat,
       date1904: workbook.date1904,
+      serialsCoercedMonthFirst: profile.serialsCoercedMonthFirst,
     });
 
     if (orderDate === null) {

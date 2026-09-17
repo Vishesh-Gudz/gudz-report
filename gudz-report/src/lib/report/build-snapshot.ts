@@ -123,6 +123,8 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
 
   const notConfigured: string[] = [];
   const reconciled: string[] = [];
+  /** Marketplaces whose own products reach no ERP item at all. */
+  const unmappable: string[] = [];
 
   for (const sheet of sheets) {
     send({ type: "sheet", sheet, stage: "parsing" });
@@ -156,6 +158,16 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
         : null;
 
       const aggregate = aggregateMonthly(mapped?.rows ?? [], confirmedSkus);
+
+      // Not "some products are unresolved" — none of them reached an ERP item.
+      // FirstClub is the real case: its FCN codes are absent from `Master`, so
+      // the sheet has no route to an EAN and nothing can be reconciled. Its
+      // sales are still counted and its goods received still land on GRN-only
+      // rows; what is missing is the join between the two, and a reader has to
+      // be told that rather than left to infer it from a column of dashes.
+      if (catalog && aggregate.distinctProducts > 0 && aggregate.mappedProducts === 0) {
+        unmappable.push(marketplace);
+      }
 
       // ── ERP: goods received for this marketplace, in its own window
       let erpState = "notConfigured";
@@ -444,6 +456,15 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           detail: `${currentSohTotal.toLocaleString("en-IN")} units available in Healthy Master's own locations, after deducting stock blocked by open orders. This is a live position, not the stock held at the end of any month.`,
         },
   );
+
+  if (unmappable.length > 0) {
+    notes.push({
+      state: "bad",
+      title: `No product in ${unmappable.join(", ")} could be matched to an ERP product`,
+      detail:
+        "This marketplace's report identifies products by a code that the Master sheet does not carry, so its rows have no route to an EAN and cannot be joined to an ERP item. Sales are counted from the marketplace report and goods received are counted from ERP invoices, but the two cannot be shown against the same product. Adding this marketplace's product codes to the Master sheet would resolve it.",
+    });
+  }
 
   if (notConfigured.length > 0) {
     notes.push({

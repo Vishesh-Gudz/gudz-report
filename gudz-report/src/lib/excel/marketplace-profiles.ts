@@ -46,6 +46,12 @@ export interface MarketplaceProfile {
    * sheet's own convention settles it.
    */
   readonly textDateFormat?: TextDateFormat;
+  /**
+   * Set when this sheet's date serials were produced by a spreadsheet reading
+   * the column's day-first text under a month-first locale, leaving the day and
+   * month transposed. See `undoMonthFirstCoercion`.
+   */
+  readonly serialsCoercedMonthFirst?: boolean;
   readonly mapping: ColumnMapping;
   /**
    * Column in `Master` holding this marketplace's own product id, used to
@@ -115,8 +121,11 @@ export const MARKETPLACE_PROFILES: ReadonlyArray<MarketplaceProfile> = [
     marketplace: "zepto",
     sheet: "Zepto",
     dateMode: "cell",
-    // Mixed column: 27,143 real date cells and 49,759 `DD-MM-YYYY` strings.
+    // Mixed column: 27,143 date serials and 49,759 `DD-MM-YYYY` strings. The
+    // serials are the same day-first text, coerced under a month-first locale
+    // before the file reached us, so their day and month are transposed.
     textDateFormat: "DD-MM-YYYY",
+    serialsCoercedMonthFirst: true,
     masterIdColumn: MASTER_COLUMNS.zepto,
     mapping: {
       orderDate: "Sales Date",
@@ -127,7 +136,7 @@ export const MARKETPLACE_PROFILES: ReadonlyArray<MarketplaceProfile> = [
     },
     caveats: [
       "Aggregated per city and day; no order id.",
-      "The date column mixes real date cells with DD-MM-YYYY text; both are read.",
+      "The date column mixes DD-MM-YYYY text with serials whose day and month were transposed before the file reached us; both are read and the transposition is undone.",
     ],
   },
   {

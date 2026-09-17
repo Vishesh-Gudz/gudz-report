@@ -76,12 +76,14 @@ export function toCalendarDate(
   options?: {
     readonly textFormat?: TextDateFormat;
     readonly date1904?: boolean;
+    readonly serialsCoercedMonthFirst?: boolean;
   },
 ): string | null {
   if (value === null || value === undefined || value === "") return null;
 
   if (typeof value === "number") {
-    return excelSerialToCalendarDate(value, options?.date1904 ?? false);
+    const day = excelSerialToCalendarDate(value, options?.date1904 ?? false);
+    return options?.serialsCoercedMonthFirst ? undoMonthFirstCoercion(day) : day;
   }
 
   if (value instanceof Date) {
@@ -155,6 +157,42 @@ export function excelSerialToCalendarDate(
     String(parsed.m).padStart(2, "0"),
     String(parsed.d).padStart(2, "0"),
   ].join("-");
+}
+
+/**
+ * Undoes Excel's month-first coercion of a day-first text date.
+ *
+ * Zepto's `Sales Date` column arrives half text and half serial, and the split
+ * is not random. Every text value has a day of 13 or above; every serial has a
+ * day of 8 or below and a month spread evenly across all twelve. That is the
+ * signature of a spreadsheet opened under a month-first locale: `13-06-2026` is
+ * not a valid `MM-DD` date so it stayed text, while `06-08-2026` parsed happily
+ * as 8 June and became a serial with the day and month transposed. Measured on
+ * the real workbook: 49,759 text rows, all in June–August, and 27,143 serials
+ * claiming twelve months of a year the sheet does not cover.
+ *
+ * The swap is only applied where it can be true. A serial whose day exceeds 12
+ * could not have come from this coercion — month-first parsing would have
+ * rejected the text and left it as text — so it is returned untouched.
+ *
+ * Declared per profile, never sniffed: whether a column suffered this is a fact
+ * about how the file was produced, and no value in it can settle the question.
+ */
+function undoMonthFirstCoercion(day: string | null): string | null {
+  if (day === null) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return null;
+
+  const [year, month, dayOfMonth] = [match[1]!, Number(match[2]), Number(match[3])];
+  // Not a coerced value — the transposed month would be impossible.
+  if (dayOfMonth > 12) return day;
+
+  const iso = `${year}-${String(dayOfMonth).padStart(2, "0")}-${String(month).padStart(2, "0")}`;
+  const parsed = new Date(`${iso}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // Guards 31 February, which the transposition can produce.
+  return parsed.toISOString().slice(0, 10) === iso ? iso : null;
 }
 
 /**
@@ -263,6 +301,7 @@ export function toCalendarDateWithMode(
     readonly year?: number | null;
     readonly textFormat?: TextDateFormat;
     readonly date1904?: boolean;
+    readonly serialsCoercedMonthFirst?: boolean;
   },
 ): string | null {
   switch (mode) {
@@ -275,6 +314,7 @@ export function toCalendarDateWithMode(
       return toCalendarDate(value, {
         textFormat: options?.textFormat,
         date1904: options?.date1904,
+        serialsCoercedMonthFirst: options?.serialsCoercedMonthFirst,
       });
   }
 }
