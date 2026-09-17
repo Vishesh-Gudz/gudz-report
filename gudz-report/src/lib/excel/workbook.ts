@@ -21,6 +21,7 @@ import {
   salesSheetsIn,
   type MarketplaceProfile,
 } from "./marketplace-profiles";
+import { isValidEan } from "./ean";
 import { ExcelParseError, inspectWorkbook, parseWorkbook } from "./parser";
 import {
   normalizeStatus,
@@ -198,10 +199,13 @@ export function importMarketplaceSheet(
       });
     }
 
-    // The sheet's own EAN wins; otherwise the marketplace id is resolved
-    // through Master. Both are recorded so the UI can say which route worked.
+    // The sheet's own EAN wins — but only if it is actually an EAN. The real
+    // Blinkit sheet puts the placeholder `8910000000000` in `UPC` on twelve
+    // different products, and trusting it both blocked the Master lookup that
+    // would have found their real barcode and collapsed twelve products onto
+    // one key. Anything failing its check digit is treated as absent.
     const sheetEan = toText(cell(mapping.barcode));
-    let barcode = sheetEan;
+    let barcode = isValidEan(sheetEan) ? sheetEan : null;
     if (barcode) {
       fromSheet += 1;
     } else {

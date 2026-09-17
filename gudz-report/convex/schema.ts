@@ -117,6 +117,15 @@ export default defineSchema({
     customerGstins: v.array(v.string()),
     /** Channel strings seen on these orders. Provenance for humans, never identity. */
     knownChannelValues: v.optional(v.array(v.string())),
+    /**
+     * The ERP `channelItemMappings.provider` this marketplace trades under.
+     *
+     * Optional because most marketplaces have no recorded channel mappings in
+     * the ERP. When one does, it is the most authoritative route from a
+     * marketplace's product id to an ERP item — someone stated the two are the
+     * same, rather than the dashboard inferring it from a barcode.
+     */
+    erpChannelProvider: v.optional(v.union(v.string(), v.null())),
     isActive: v.boolean(),
     updatedAt: v.number(),
   }).index("by_marketplace", ["marketplace"]),

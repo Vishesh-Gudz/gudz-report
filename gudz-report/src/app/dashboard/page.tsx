@@ -1,42 +1,47 @@
-import { KpiCards } from "@/components/dashboard/kpi-cards";
-import { DataQuality } from "@/components/dashboard/data-quality";
-import { ProductSummary } from "@/components/dashboard/product-summary";
-import { ReportFiltersForm } from "@/components/dashboard/report-filters";
-import { ReportTable } from "@/components/dashboard/report-table";
-import { filterLines } from "@/lib/report/aggregate";
-import { loadReport, resolvePeriod } from "@/lib/report/load";
+import Link from "next/link";
+
+import { MappingQuality } from "@/components/dashboard/mapping-quality";
+import { PeriodAlignment } from "@/components/dashboard/period-alignment";
+import { ReconciliationTable } from "@/components/dashboard/reconciliation-table";
+import { ReportKpiCards } from "@/components/dashboard/report-kpis";
+import { ReportSelector } from "@/components/dashboard/report-selector";
 import { monthPeriod } from "@/lib/dates/reporting-period";
 import { REPORTABLE_STATUSES } from "@/lib/report/policy";
+import {
+  listImports,
+  loadMarketplaceReport,
+} from "@/lib/report/marketplace-report";
 
 export const metadata = { title: "Dashboard · Gudz Report" };
 
 /**
- * The B2B sales report.
+ * The client-facing report.
  *
  * A Server Component, which is what keeps the ERP key server-side: the fetch
  * happens in this process and only the aggregated model is serialised to the
- * browser. Nothing here is exposed to a client component except plain data.
+ * browser. No client component here receives anything but plain data.
  *
  * `force-dynamic` because the ERP is queried per request against a live
- * reporting period — a cached page would serve last month's numbers under this
- * month's filters.
+ * reporting period — a cached page would serve one import's numbers under
+ * another's filters.
  */
 export const dynamic = "force-dynamic";
 
 /**
- * Period when nothing else says otherwise.
+ * Only used when there is no import at all.
  *
- * August 2026 is where the verified Healthy Master data actually is (1,245 B2B
- * orders). Defaulting to "this month" would open the dashboard on an empty
- * screen and read as broken.
+ * The reporting period normally comes from the uploaded sheet's own dates, which
+ * is the whole point — the file says what window it covers. This exists so the
+ * page renders something real before the first upload rather than an empty
+ * screen that reads as broken.
  */
 const FALLBACK_PERIOD = monthPeriod("2026-08");
 
-const inr = new Intl.NumberFormat("en-IN", {
-  style: "currency",
-  currency: "INR",
-  maximumFractionDigits: 0,
-});
+function single(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 function formatDay(day: string): string {
   const date = new Date(`${day}T00:00:00.000Z`);
@@ -50,12 +55,6 @@ function formatDay(day: string): string {
       });
 }
 
-function single(value: string | string[] | undefined): string | undefined {
-  const raw = Array.isArray(value) ? value[0] : value;
-  const trimmed = raw?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -63,99 +62,91 @@ export default async function DashboardPage({
 }) {
   const params = await searchParams;
 
-  const { period, latestImport } = await resolvePeriod(
-    { from: single(params.from), to: single(params.to) },
+  const imports = await listImports();
+  const report = await loadMarketplaceReport(
+    {
+      importId: single(params.importId) ?? null,
+      marketplace: single(params.marketplace) ?? null,
+    },
     FALLBACK_PERIOD,
   );
-
-  const { model, source } = await loadReport({
-    period,
-    importId: single(params.importId) ?? latestImport?._id ?? null,
-  });
-
-  const filters = {
-    marketplace: single(params.marketplace),
-    customer: single(params.customer),
-    sku: single(params.sku),
-    product: single(params.product),
-    status: single(params.status),
-  };
-
-  const lines = filterLines(model.lines, filters);
-
-  // Recomputed for the filtered view so the table footer and the product
-  // summary describe the same rows. The KPI cards above stay on the whole
-  // period — they answer "how did August go", not "what did I just filter to".
-  const filteredRevenue = lines.reduce((total, row) => total + row.lineTotal, 0);
 
   return (
     <main className="mx-auto flex w-full max-w-[110rem] flex-1 flex-col gap-6 px-6 py-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-zinc-500">Healthy Master</p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            SOH / B2B Sales Report
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">SOH Report</h1>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Marketplace{" "}
+            <strong className="capitalize">
+              {report.marketplace ?? "not selected"}
+            </strong>
+          </p>
         </div>
         <div className="text-right">
-          <p className="text-xs uppercase tracking-wide text-zinc-500">
+          <p className="text-xs tracking-wide text-zinc-500 uppercase">
             Reporting period
           </p>
           <p className="font-medium">
-            {formatDay(model.period.fromDay)} → {formatDay(model.period.toDay)}
+            {formatDay(report.period.fromDay)} → {formatDay(report.period.toDay)}
+          </p>
+          <p className="text-xs text-zinc-500">
+            Derived from the uploaded sheet&rsquo;s own dates
           </p>
         </div>
       </header>
 
-      {source.warnings.length > 0 ? (
+      <ReportSelector
+        imports={imports}
+        selectedImportId={single(params.importId) ?? null}
+        marketplaces={report.availableMarketplaces.map((entry) => entry.marketplace)}
+        selectedMarketplace={report.marketplace}
+      />
+
+      {report.warnings.length > 0 ? (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950">
           <p className="font-medium">Data notes</p>
           <ul className="mt-1 list-disc space-y-1 pl-5">
-            {source.warnings.map((warning) => (
+            {report.warnings.map((warning) => (
               <li key={warning}>{warning}</li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {source.excelRowCount === 0 ? (
+      {report.excel.rows === 0 ? (
         <p className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-          No Excel import is loaded for this period, so every line below is shown
-          as <strong>ERP only</strong> and no variances are computed. Upload a
-          marketplace workbook on the{" "}
-          <a href="/imports" className="underline underline-offset-4">
+          No marketplace sheet is loaded, so every SKU below is shown as{" "}
+          <strong>ERP only</strong> and no variances are computed. Upload a
+          workbook and choose its sheet on the{" "}
+          <Link href="/imports" className="underline underline-offset-4">
             imports
-          </a>{" "}
-          page to reconcile against it.
+          </Link>{" "}
+          page.
         </p>
       ) : null}
 
-      <KpiCards kpis={model.kpis} />
+      <ReportKpiCards kpis={report.kpis} />
 
-      <ReportFiltersForm
-        values={{
-          from: model.period.fromDay,
-          to: model.period.toDay,
-          ...filters,
-        }}
-        model={model}
+      <PeriodAlignment
+        period={report.period}
+        excel={report.excel}
+        erp={report.erp}
       />
 
-      <section className="flex flex-col gap-2">
+      <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-lg font-semibold">Sales order lines</h2>
+          <h2 className="text-lg font-semibold">Product reconciliation</h2>
           <p className="text-sm text-zinc-500">
-            Filtered revenue {inr.format(filteredRevenue)} · statuses{" "}
-            {REPORTABLE_STATUSES.join(", ")} · quantity from{" "}
-            <code>orderedQuantity</code>
+            Aggregated per SKU · ERP statuses {REPORTABLE_STATUSES.join(", ")} ·
+            quantity from <code>orderedQuantity</code>
           </p>
         </div>
-        <ReportTable rows={lines} />
+        <ReconciliationTable rows={report.reconciliation.rows} />
       </section>
 
-      <ProductSummary result={model.skuReconciliation} />
-
-      <DataQuality kpis={model.kpis} unmatched={model.unmatched} />
+      <MappingQuality report={report} />
     </main>
   );
 }

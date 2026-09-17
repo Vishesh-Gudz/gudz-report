@@ -236,7 +236,21 @@ describe("totals", () => {
     expect(result.totals.erpRevenue).toBe(170);
     expect(result.totals.excelRevenue).toBe(100);
     expect(result.totals.quantityVariance).toBe(-7);
-    expect(result.counts.skusWithVariance).toBe(2);
+    // `skusWithVariance` counts SKUs present on BOTH sides that disagree. SKU B
+    // is ERP-only, which is a different finding and is counted as such — rolling
+    // it in here would make a one-sided gap look like a measurement dispute.
+    expect(result.counts.skusWithVariance).toBe(1);
+    expect(result.counts.skusErpOnly).toBe(1);
+  });
+
+  test("a SKU that agrees on both sides is matched, not a variance", () => {
+    const result = reconcileBySku(
+      [excelRow({ sku: "A", quantity: 12, grossSales: 120 })],
+      [erpLine({ sku: "A", orderedQuantity: 12, lineTotal: 120 })],
+    );
+    expect(result.rows[0]?.status).toBe("matched");
+    expect(result.counts.skusMatched).toBe(1);
+    expect(result.counts.skusWithVariance).toBe(0);
   });
 
   test("an empty reconciliation is all zeros, not NaN", () => {

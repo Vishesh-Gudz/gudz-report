@@ -113,7 +113,9 @@ export default async function ImportsPage() {
                     <td className="px-3 py-2">
                       {row.minDate && row.maxDate ? (
                         <Link
-                          href={`/dashboard?from=${row.minDate}&to=${row.maxDate}&importId=${row._id}`}
+                          // The dashboard derives the period from the import
+                          // itself, so the id is the whole link.
+                          href={`/dashboard?importId=${row._id}`}
                           className="underline underline-offset-4"
                         >
                           Report

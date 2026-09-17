@@ -1,5 +1,6 @@
 import type { SalesOrderLine } from "../../types/erp";
 import type { NormalizedExcelRow } from "../../types/excel";
+import type { MappedExcelRow } from "./product-mapping";
 import { isReportableStatus, reportedQuantity } from "./policy";
 
 /**
@@ -12,19 +13,40 @@ import { isReportableStatus, reportedQuantity } from "./policy";
  * multi-candidate.
  *
  * Nothing in that is a bug — refusing to pick one of dozens is correct. The
- * mistake would be forcing a line-to-line join that the data cannot support.
- * Both sides are therefore aggregated by SKU and compared in totals, which is
- * also the question a client asks: "we sold 14,978 of this — does the ERP
- * agree?"
+ * mistake would be forcing a line-to-line join the data cannot support. Both
+ * sides are therefore aggregated by SKU and compared in totals, which is also
+ * the question a client asks: "we sold 14,978 of this — does the ERP agree?"
  *
- * Line-level matching is kept for the cases where it genuinely works (a shared
- * marketplace item id), and its ambiguity is reported rather than hidden.
+ * Line-level matching is kept as a secondary diagnostic (`matching.ts`), and its
+ * ambiguity is reported rather than hidden.
  */
 
 export type SkuMatchStatus =
+  /** Present on both sides and in agreement. */
   | "matched"
+  /** Present on both sides, but the numbers disagree. */
+  | "variance"
   | "excelOnly"
   | "erpOnly";
+
+/** One ERP order contributing to a SKU. Shown when a product is opened. */
+export interface SkuErpOrderRef {
+  readonly salesOrderId: string;
+  readonly soNumber: string;
+  readonly orderDate: string;
+  readonly status: string;
+  readonly quantity: number;
+  readonly amount: number;
+}
+
+/** One spreadsheet row contributing to a SKU. */
+export interface SkuExcelRowRef {
+  readonly sourceRow: number;
+  readonly orderDate: string | null;
+  readonly productName: string | null;
+  readonly quantity: number | null;
+  readonly amount: number | null;
+}
 
 export interface SkuReconciliationRow {
   readonly sku: string;
@@ -40,17 +62,22 @@ export interface SkuReconciliationRow {
   /** Excel minus ERP. Positive means the marketplace claims more than the ERP. */
   readonly quantityVariance: number;
   readonly amountVariance: number;
-  /** Variance as a share of the ERP quantity, for sorting by materiality. */
+  /** Variance as a share of the ERP figure. Null when the ERP has nothing. */
   readonly quantityVariancePct: number | null;
+  readonly amountVariancePct: number | null;
+  /** Whether the Excel side reached this SKU through the ERP catalogue. */
+  readonly mappedToErp: boolean;
+  readonly erpOrderRefs: SkuErpOrderRef[];
+  readonly excelRowRefs: SkuExcelRowRef[];
 }
 
 export interface SkuReconciliationResult {
   readonly rows: SkuReconciliationRow[];
   readonly counts: {
     readonly skusMatched: number;
+    readonly skusWithVariance: number;
     readonly skusExcelOnly: number;
     readonly skusErpOnly: number;
-    readonly skusWithVariance: number;
   };
   readonly totals: {
     readonly erpQuantity: number;
@@ -71,31 +98,72 @@ function foldSku(value: string | null | undefined): string | null {
 
 interface Bucket {
   displayName: string;
-  erpOrders: Set<string>;
+  erpOrders: Map<string, SkuErpOrderRef>;
   erpLines: number;
   erpQuantity: number;
   erpRevenue: number;
-  excelRows: number;
+  /** Capped listing for the detail panel. */
+  excelRows: SkuExcelRowRef[];
+  /** Every contributing row, including the ones the listing dropped. */
+  excelRowCount: number;
   excelQuantity: number;
   excelRevenue: number;
+  mappedToErp: boolean;
 }
 
 function emptyBucket(displayName: string): Bucket {
   return {
     displayName,
-    erpOrders: new Set(),
+    erpOrders: new Map(),
     erpLines: 0,
     erpQuantity: 0,
     erpRevenue: 0,
-    excelRows: 0,
+    excelRows: [],
+    excelRowCount: 0,
     excelQuantity: 0,
     excelRevenue: 0,
+    mappedToErp: false,
   };
 }
 
 export interface SkuReconcileOptions {
   /** Only count ERP lines whose order status is business. On by default. */
   readonly reportableOnly?: boolean;
+  /**
+   * How many contributing rows to keep per SKU for the detail view.
+   *
+   * Capped because a month of Blinkit puts twelve hundred spreadsheet rows
+   * behind a single product, and shipping all of them to the browser to render
+   * a detail panel nobody scrolls to the end of is a megabyte for nothing. The
+   * totals stay exact; only the listing is truncated.
+   */
+  readonly detailLimit?: number;
+}
+
+/** Either a plain row, or one already resolved to an ERP SKU. */
+export type ReconcilableExcelRow = NormalizedExcelRow | MappedExcelRow;
+
+function asMapped(entry: ReconcilableExcelRow): MappedExcelRow {
+  if ("row" in entry && "mapping" in entry) return entry;
+  const row = entry as NormalizedExcelRow;
+  // No mapping pass was run, so the row's own identifier is the best key there
+  // is. `keyIsErpSku` is false, which is what stops the report from claiming
+  // the row reached the ERP catalogue when it never looked.
+  const key = foldSku(row.sku) ?? foldSku(row.barcode) ?? null;
+  return {
+    row,
+    mapping: {
+      status: key ? "ambiguous" : "unmapped",
+      route: null,
+      item: null,
+      candidates: [],
+      reason: key
+        ? "No catalogue mapping was attempted for this row."
+        : "The row carries no identifier.",
+    },
+    key: key ?? "(unidentified)",
+    keyIsErpSku: false,
+  };
 }
 
 /**
@@ -107,11 +175,12 @@ export interface SkuReconcileOptions {
  * file is.
  */
 export function reconcileBySku(
-  excelRows: ReadonlyArray<NormalizedExcelRow>,
+  excelRows: ReadonlyArray<ReconcilableExcelRow>,
   erpLines: ReadonlyArray<SalesOrderLine>,
   options?: SkuReconcileOptions,
 ): SkuReconciliationResult {
   const reportableOnly = options?.reportableOnly ?? true;
+  const detailLimit = options?.detailLimit ?? 50;
   const buckets = new Map<string, Bucket>();
 
   for (const line of erpLines) {
@@ -120,36 +189,67 @@ export function reconcileBySku(
     if (!sku) continue;
 
     const bucket = buckets.get(sku) ?? emptyBucket(line.name);
-    bucket.erpOrders.add(line.salesOrderId);
+    const quantity = reportedQuantity(line);
+
+    const order = bucket.erpOrders.get(line.salesOrderId) ?? {
+      salesOrderId: line.salesOrderId,
+      soNumber: line.soNumber,
+      orderDate: line.orderDate,
+      status: line.status,
+      quantity: 0,
+      amount: 0,
+    };
+    bucket.erpOrders.set(line.salesOrderId, {
+      ...order,
+      quantity: order.quantity + quantity,
+      amount: order.amount + line.lineTotal,
+    });
+
     bucket.erpLines += 1;
-    bucket.erpQuantity += reportedQuantity(line);
+    bucket.erpQuantity += quantity;
     bucket.erpRevenue += line.lineTotal;
     buckets.set(sku, bucket);
   }
 
-  for (const row of excelRows) {
-    // Barcode is accepted as a fallback identifier because some marketplace
-    // exports key on it rather than on a seller SKU.
-    const sku = foldSku(row.sku) ?? foldSku(row.barcode);
-    if (!sku) continue;
+  for (const entry of excelRows) {
+    const mapped = asMapped(entry);
+    const sku = foldSku(mapped.key);
+    if (!sku || sku === "(UNIDENTIFIED)") continue;
 
     const bucket =
-      buckets.get(sku) ?? emptyBucket(row.productName ?? sku);
-    bucket.excelRows += 1;
-    bucket.excelQuantity += row.quantity ?? 0;
-    bucket.excelRevenue += row.grossSales ?? 0;
+      buckets.get(sku) ?? emptyBucket(mapped.row.productName ?? mapped.mapping.item?.name ?? sku);
+
+    if (bucket.excelRows.length < detailLimit) {
+      bucket.excelRows.push({
+        sourceRow: mapped.row.sourceRow,
+        orderDate: mapped.row.orderDate,
+        productName: mapped.row.productName,
+        quantity: mapped.row.quantity,
+        amount: mapped.row.grossSales,
+      });
+    }
+
+    bucket.excelQuantity += mapped.row.quantity ?? 0;
+    bucket.excelRevenue += mapped.row.grossSales ?? 0;
+    // Tracked separately from the row count because the detail list is capped.
+    bucket.excelRowCount += 1;
+    if (mapped.keyIsErpSku) bucket.mappedToErp = true;
     buckets.set(sku, bucket);
   }
 
   const rows: SkuReconciliationRow[] = [...buckets.entries()].map(([sku, bucket]) => {
-    const status: SkuMatchStatus =
-      bucket.erpLines > 0 && bucket.excelRows > 0
-        ? "matched"
-        : bucket.excelRows > 0
-          ? "excelOnly"
-          : "erpOnly";
-
+    const excelRowCount = bucket.excelRowCount;
     const quantityVariance = bucket.excelQuantity - bucket.erpQuantity;
+    const amountVariance = bucket.excelRevenue - bucket.erpRevenue;
+
+    const bothSides = bucket.erpLines > 0 && excelRowCount > 0;
+    const status: SkuMatchStatus = bothSides
+      ? quantityVariance === 0 && amountVariance === 0
+        ? "matched"
+        : "variance"
+      : excelRowCount > 0
+        ? "excelOnly"
+        : "erpOnly";
 
     return {
       sku,
@@ -159,14 +259,21 @@ export function reconcileBySku(
       erpLines: bucket.erpLines,
       erpQuantity: bucket.erpQuantity,
       erpRevenue: bucket.erpRevenue,
-      excelRows: bucket.excelRows,
+      excelRows: excelRowCount,
       excelQuantity: bucket.excelQuantity,
       excelRevenue: bucket.excelRevenue,
       quantityVariance,
-      amountVariance: bucket.excelRevenue - bucket.erpRevenue,
-      // Undefined rather than Infinity when the ERP has nothing to compare to.
+      amountVariance,
+      // Null rather than Infinity when the ERP has nothing to compare against.
       quantityVariancePct:
-        bucket.erpQuantity > 0 ? quantityVariance / bucket.erpQuantity : null,
+        bucket.erpQuantity !== 0 ? quantityVariance / bucket.erpQuantity : null,
+      amountVariancePct:
+        bucket.erpRevenue !== 0 ? amountVariance / bucket.erpRevenue : null,
+      mappedToErp: bucket.mappedToErp,
+      erpOrderRefs: [...bucket.erpOrders.values()].sort((a, b) =>
+        a.orderDate.localeCompare(b.orderDate),
+      ),
+      excelRowRefs: bucket.excelRows,
     };
   });
 
@@ -196,11 +303,9 @@ export function reconcileBySku(
     rows,
     counts: {
       skusMatched: rows.filter((row) => row.status === "matched").length,
+      skusWithVariance: rows.filter((row) => row.status === "variance").length,
       skusExcelOnly: rows.filter((row) => row.status === "excelOnly").length,
       skusErpOnly: rows.filter((row) => row.status === "erpOnly").length,
-      skusWithVariance: rows.filter(
-        (row) => row.quantityVariance !== 0 || row.amountVariance !== 0,
-      ).length,
     },
     totals,
   };

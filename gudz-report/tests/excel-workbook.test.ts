@@ -7,6 +7,7 @@ import {
   salesSheetsIn,
   MARKETPLACE_PROFILES,
 } from "@/lib/excel/marketplace-profiles";
+import { isValidEan } from "@/lib/excel/ean";
 import { buildMasterIndex, eanForMarketplaceId } from "@/lib/excel/master-sheet";
 import {
   excelSerialToCalendarDate,
@@ -314,5 +315,37 @@ describe("importing a chosen sheet", () => {
     expect(() => importMarketplaceSheet(data, { sheet: "Master" })).toThrow(
       /not a recognised marketplace sheet/i,
     );
+  });
+});
+
+describe("EAN validity", () => {
+  test("accepts the workbook's real EANs", () => {
+    for (const ean of [
+      "8906165854705",
+      "8906165851278",
+      "8906165850653",
+      "8906165856747",
+    ]) {
+      expect(isValidEan(ean)).toBe(true);
+    }
+  });
+
+  test("rejects the placeholder the real Blinkit sheet uses", () => {
+    // `8910000000000` appears on 107 rows across twelve different products.
+    // One product cannot be twelve, and its check digit says so.
+    expect(isValidEan("8910000000000")).toBe(false);
+  });
+
+  test("rejects anything that is not an EAN at all", () => {
+    expect(isValidEan("NA")).toBe(false);
+    expect(isValidEan("")).toBe(false);
+    expect(isValidEan(null)).toBe(false);
+    // An HSN code sitting in a barcode field — the real catalogue has these.
+    expect(isValidEan("21069099")).toBe(false);
+  });
+
+  test("accepts UPC-A and EAN-8, not just EAN-13", () => {
+    expect(isValidEan("036000291452")).toBe(true);
+    expect(isValidEan("96385074")).toBe(true);
   });
 });

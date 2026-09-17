@@ -47,6 +47,7 @@ export const upsert = mutation({
     marketplace: v.string(),
     customerGstins: v.array(v.string()),
     knownChannelValues: v.optional(v.array(v.string())),
+    erpChannelProvider: v.optional(v.union(v.string(), v.null())),
     isActive: v.optional(v.boolean()),
   },
   returns: v.id("marketplaces"),
@@ -71,6 +72,7 @@ export const upsert = mutation({
       marketplace,
       customerGstins: gstins,
       knownChannelValues: args.knownChannelValues,
+      erpChannelProvider: args.erpChannelProvider ?? null,
       isActive: args.isActive ?? true,
       updatedAt: Date.now(),
     };

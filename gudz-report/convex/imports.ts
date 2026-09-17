@@ -153,14 +153,49 @@ export const get = query({
   },
 });
 
-/** Rows for one import. Index-scoped: never a full scan across every upload. */
+/**
+ * A preview of one import's rows. Index-scoped: never a full scan.
+ *
+ * Capped well below Convex's 8,192-item limit on a query result, because this
+ * is for showing a human a sample. Reading every row of an import is what
+ * `rowsPage` is for.
+ */
 export const rowsForImport = query({
   args: { importId: v.id("imports"), limit: v.optional(v.number()) },
   handler: async (ctx, args): Promise<Doc<"excelRows">[]> => {
     return await ctx.db
       .query("excelRows")
       .withIndex("by_importId", (q) => q.eq("importId", args.importId))
-      .take(args.limit ?? 100);
+      .take(Math.min(args.limit ?? 100, 1000));
+  },
+});
+
+/**
+ * One page of an import's rows.
+ *
+ * Convex refuses to return more than 8,192 items from a single query, and a
+ * marketplace month is comfortably past that — the real Blinkit sheet is 8,451
+ * rows and Zepto is 76,902. Asking for them all in one call does not truncate,
+ * it fails the whole query, which is how the dashboard came to show an ERP-only
+ * report with a Convex error where the spreadsheet should have been.
+ *
+ * So the caller walks pages. `numItems` is capped rather than trusted, since a
+ * caller asking for 50,000 would hit the same wall from the other side.
+ */
+export const rowsPage = query({
+  args: {
+    importId: v.id("imports"),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("excelRows")
+      .withIndex("by_importId", (q) => q.eq("importId", args.importId))
+      .paginate({
+        cursor: args.cursor,
+        numItems: Math.min(Math.max(args.numItems ?? 2000, 1), 4000),
+      });
   },
 });
 

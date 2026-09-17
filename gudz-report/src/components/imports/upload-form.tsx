@@ -391,9 +391,11 @@ export function UploadForm() {
               . The dashboard will request ERP sales-order lines for exactly this
               range.{" "}
               <a
-                href={`/dashboard?from=${imported.period.from}&to=${imported.period.to}${
-                  imported.importId ? `&importId=${imported.importId}` : ""
-                }`}
+                href={
+                  imported.importId
+                    ? `/dashboard?importId=${imported.importId}`
+                    : "/dashboard"
+                }
                 className="underline underline-offset-4"
               >
                 Open the report
