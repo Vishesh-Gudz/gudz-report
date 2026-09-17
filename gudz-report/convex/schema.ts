@@ -27,6 +27,16 @@ export default defineSchema({
    */
   imports: defineTable({
     fileName: v.string(),
+    /**
+     * Which marketplace sheet this import came from.
+     *
+     * One workbook holds six of them, so the file name alone does not identify
+     * an import. Optional because imports created before sheet selection
+     * existed have no answer, and inventing one would attribute their rows to a
+     * marketplace nobody chose.
+     */
+    marketplace: v.optional(v.string()),
+    sheetName: v.optional(v.string()),
     uploadedAt: v.number(),
     status: v.union(
       v.literal("pending"),

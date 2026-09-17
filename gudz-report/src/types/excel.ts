@@ -72,6 +72,14 @@ export interface ParsedWorkbook {
   /** Header-keyed cells. Values stay as SheetJS produced them. */
   readonly rows: ReadonlyArray<Record<string, unknown>>;
   readonly sheets: ParsedSheet[];
+  /**
+   * Whether the file uses the 1904 date system (the old Mac default).
+   *
+   * Carried because date cells are raw serials, and the same serial is 1,462
+   * days apart between the two systems — reading it without knowing which is
+   * in force would shift every date by just over four years.
+   */
+  readonly date1904: boolean;
 }
 
 export interface ImportStatistics {

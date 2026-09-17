@@ -11,10 +11,16 @@ import type { ParsedSheet, ParsedWorkbook } from "../../types/excel";
  * supplied by the caller. Keeping the two apart is what lets a new marketplace
  * be supported by adding a mapping rather than editing a parser.
  *
- * Dates are the one exception, and for a good reason: SheetJS can only produce
- * real `Date` objects if it is told to at read time (`cellDates`), and a spread-
- * sheet serial number is indistinguishable from a quantity once it reaches the
- * normalizer. So the decision is made here, where the information still exists.
+ * Date cells are handed on as raw Excel **serial numbers**, on purpose. Asking
+ * SheetJS for `Date` objects (`cellDates: true`) converts through the machine's
+ * timezone and lands ten seconds before midnight on the previous day — serial
+ * `46174` is 1 June 2026 in Excel and arrives as `2026-05-31T18:29:50Z` on an
+ * IST machine, which is 31 May read either as UTC or as local components. That
+ * put every date in the real workbook one day early. The serial carries no
+ * timezone, so it is passed through intact and converted in `validation.ts`.
+ *
+ * The cost is that a serial is indistinguishable from a quantity, so only a
+ * column the caller has *declared* to be a date is read as one.
  */
 
 export class ExcelParseError extends Error {
@@ -53,9 +59,9 @@ function readWorkbook(data: ArrayBuffer | Uint8Array): XLSX.WorkBook {
   try {
     return XLSX.read(data, {
       type: "array",
-      // Without this, a date cell arrives as a serial number that the normalizer
-      // has no way to tell apart from a quantity.
-      cellDates: true,
+      // `cellDates` is deliberately OFF. See the note at the top of this file:
+      // it converts through the local timezone and loses a day.
+      cellDates: false,
       // Formatting is irrelevant here and dominates memory on a large export.
       cellStyles: false,
       cellHTML: false,
@@ -121,6 +127,7 @@ export function parseWorkbook(
     headers: Object.keys(rows[0] as object),
     rows,
     sheets,
+    date1904: workbook.Workbook?.WBProps?.date1904 === true,
   };
 }
 

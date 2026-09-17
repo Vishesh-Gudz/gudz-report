@@ -1,31 +1,42 @@
 import { anyApi } from "convex/server";
 
 import { getConvexClient } from "@/lib/convex/server";
-import { parseWorkbook, ExcelParseError } from "@/lib/excel/parser";
+import { ExcelParseError } from "@/lib/excel/parser";
 import {
-  normalizeWorkbook,
-  periodFromStatistics,
-  suggestColumnMapping,
-  ExcelNormalizationError,
-} from "@/lib/excel/normalizer";
-import type { ColumnMapping } from "@/types/excel";
+  importMarketplaceSheet,
+  inspectMarketplaceWorkbook,
+} from "@/lib/excel/workbook";
 
 /**
- * Workbook upload.
+ * Workbook upload, in two steps: inspect, then import one sheet.
  *
- * Parsing happens here, on the server, for three reasons: the rules that
- * interpret a marketplace file live in one place rather than being
- * re-implemented per client, a large export never crosses the wire twice, and
- * the browser never needs a Convex write credential.
+ * The two steps exist because the real Healthy Master workbook is not one
+ * export — it is a `Master` product table plus six marketplace sheets that
+ * share no schema. The first version picked the first sheet with rows, landed
+ * on `Master`, and reported "No date column mapped", which was a correct
+ * complaint about the wrong sheet. Nothing here guesses which sheet is meant:
+ * a request without `sheet` returns what the file contains, and a human picks.
+ *
+ * Parsing stays on the server so the rules that interpret a marketplace file
+ * live in one place, a large export never crosses the wire twice, and the
+ * browser never needs a Convex write credential.
  *
  * Convex is optional. Without a deployment the endpoint still parses, validates
- * and reports the detected period — which is exactly what someone needs while
- * they are working out whether a new workbook can be mapped at all. It just
- * cannot persist, and says so rather than pretending it did.
+ * and reports the detected period — exactly what someone needs while working
+ * out whether a workbook can be mapped at all. It just cannot persist, and says
+ * so rather than pretending it did.
  */
 
 /** 25 MB. A marketplace month is a few MB; anything far larger is a mistake. */
 const MAX_BYTES = 25 * 1024 * 1024;
+
+/** Convex caps a single mutation's writes; a marketplace month exceeds it. */
+const ROW_BATCH = 500;
+
+function text(form: FormData, key: string): string | null {
+  const value = form.get(key);
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
 
 export async function POST(request: Request): Promise<Response> {
   let form: FormData;
@@ -55,19 +66,39 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const persist = form.get("persist") !== "false";
-  const sheetName = typeof form.get("sheet") === "string" ? String(form.get("sheet")) : undefined;
+  const sheet = text(form, "sheet");
+  const yearText = text(form, "year");
+  const year = yearText === null ? null : Number(yearText);
+  if (yearText !== null && !Number.isInteger(year)) {
+    return Response.json(
+      { ok: false, error: `"${yearText}" is not a year.` },
+      { status: 400 },
+    );
+  }
+
+  const data = new Uint8Array(await file.arrayBuffer());
 
   try {
-    const workbook = parseWorkbook(new Uint8Array(await file.arrayBuffer()), { sheetName });
+    // Step one: no sheet chosen yet. Report the file, import nothing.
+    if (!sheet) {
+      const overview = inspectMarketplaceWorkbook(data);
+      return Response.json({
+        ok: true,
+        mode: "inspect",
+        fileName: file.name,
+        hasMasterSheet: overview.hasMasterSheet,
+        master: overview.master,
+        marketplaces: overview.marketplaces,
+        unrecognisedSheets: overview.unrecognisedSheets,
+        sheetNames: overview.sheets.map((entry) => entry.name),
+      });
+    }
 
-    // Suggested, never assumed. The real Healthy Master / Blinkit column names
-    // have not been confirmed, so the mapping is reported back for a human to
-    // check rather than applied silently.
-    const mapping: ColumnMapping = suggestColumnMapping(workbook.headers);
-    const { rows, errors, statistics } = normalizeWorkbook(workbook, mapping);
-    const period = periodFromStatistics(statistics);
+    // Step two: import the chosen sheet.
+    const result = importMarketplaceSheet(data, { sheet, year });
+    const { statistics, period } = result;
 
+    const persist = form.get("persist") !== "false";
     const convex = getConvexClient();
     let importId: string | null = null;
     let persisted = false;
@@ -77,14 +108,14 @@ export async function POST(request: Request): Promise<Response> {
       try {
         importId = (await convex.mutation(anyApi.imports.create as never, {
           fileName: file.name,
+          marketplace: result.marketplace,
+          sheetName: result.sheet,
         } as never)) as string;
 
-        // Chunked: a Convex mutation is one transaction with a bounded write
-        // budget, and a marketplace month exceeds it in a single call.
-        for (let offset = 0; offset < rows.length; offset += 500) {
+        for (let offset = 0; offset < result.rows.length; offset += ROW_BATCH) {
           await convex.mutation(anyApi.imports.insertRows as never, {
             importId,
-            rows: rows.slice(offset, offset + 500),
+            rows: result.rows.slice(offset, offset + ROW_BATCH),
           } as never);
         }
 
@@ -113,35 +144,36 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
+    // Unresolved identifiers are not an error, but they are the single biggest
+    // reason a reconciliation later shows a one-sided gap, so they are said out
+    // loud rather than left in a counter nobody reads.
+    if (result.identifiers.unresolved > 0) {
+      notes.push(
+        `${result.identifiers.unresolved.toLocaleString("en-IN")} of ${statistics.totalRows.toLocaleString("en-IN")} rows ` +
+          `could not be resolved to an EAN through the Master sheet, so they cannot be matched to an ERP item.`,
+      );
+    }
+
     return Response.json({
       ok: true,
+      mode: "import",
       importId,
       persisted,
       fileName: file.name,
-      sheetNames: workbook.sheetNames,
-      selectedSheet: workbook.selectedSheet,
-      headers: workbook.headers,
-      suggestedMapping: mapping,
+      marketplace: result.marketplace,
+      selectedSheet: result.sheet,
       statistics,
       period: period ? { from: period.fromDay, to: period.toDay } : null,
+      identifiers: result.identifiers,
+      master: result.master,
+      caveats: result.caveats,
       // Capped: a malformed file produces an error per row and a reply that
       // large helps nobody. The counts in `statistics` stay exact.
-      errors: errors.slice(0, 100),
-      errorCount: errors.length,
+      errors: result.errors.slice(0, 100),
+      errorCount: result.errors.length,
       notes,
     });
   } catch (cause) {
-    if (cause instanceof ExcelNormalizationError) {
-      return Response.json(
-        {
-          ok: false,
-          error: cause.message,
-          problems: cause.problems,
-          hint: "The sheet's columns could not be mapped automatically. Confirm the header row and column names.",
-        },
-        { status: 422 },
-      );
-    }
     if (cause instanceof ExcelParseError) {
       return Response.json({ ok: false, error: cause.message }, { status: 422 });
     }

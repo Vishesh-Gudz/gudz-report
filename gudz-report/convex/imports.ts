@@ -20,11 +20,17 @@ const IMPORT_STATUS = v.union(
 );
 
 export const create = mutation({
-  args: { fileName: v.string() },
+  args: {
+    fileName: v.string(),
+    marketplace: v.optional(v.string()),
+    sheetName: v.optional(v.string()),
+  },
   returns: v.id("imports"),
   handler: async (ctx, args): Promise<Id<"imports">> => {
     return await ctx.db.insert("imports", {
       fileName: args.fileName,
+      marketplace: args.marketplace,
+      sheetName: args.sheetName,
       uploadedAt: Date.now(),
       status: "pending",
       minDate: null,
