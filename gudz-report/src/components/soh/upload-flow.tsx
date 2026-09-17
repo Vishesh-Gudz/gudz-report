@@ -292,27 +292,19 @@ export function UploadFlow() {
             const dropped = event.dataTransfer.files?.[0];
             if (dropped) void inspect(dropped);
           }}
-          className={`flex flex-col items-center gap-3 border border-dashed px-6 py-12 text-center transition-colors ${
+          className={`flex flex-col items-center gap-2.5 border border-dashed px-6 py-10 text-center transition-colors ${
             dragging ? "border-zinc-400 bg-zinc-50" : "border-zinc-300 bg-white"
           }`}
         >
-          <FileSpreadsheet className="h-6 w-6 text-zinc-400" aria-hidden />
-          <div>
-            <p className="text-[14px] font-medium text-zinc-900">
-              Drop a marketplace workbook here
-            </p>
-            <p className="mt-1 text-[13px] text-zinc-500">
-              Excel .xlsx exported from the marketplace, up to 25 MB
-            </p>
-          </div>
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
-            className="mt-1 inline-flex items-center gap-2 rounded bg-zinc-900 px-3.5 py-2 text-[13px] font-medium text-white hover:bg-zinc-800"
+            className="inline-flex items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-zinc-800"
           >
             <Upload className="h-3.5 w-3.5" aria-hidden />
-            Browse files
+            Upload XLSX
           </button>
+          <p className="text-[12px] text-zinc-400">XLSX only, up to 25 MB</p>
         </div>
         <FileInput inputRef={inputRef} onPick={inspect} />
       </>
@@ -342,7 +334,7 @@ export function UploadFlow() {
         </div>
 
         {reading ? (
-          <p className="flex items-center gap-2 px-4 py-4 text-[13px] text-zinc-600">
+          <p className="flex items-center gap-2 px-4 py-3 text-[13px] text-zinc-600">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             Reading workbook
           </p>
@@ -351,11 +343,9 @@ export function UploadFlow() {
         {overview && !processing ? (
           <div className="px-4 py-4">
             <div className="flex items-baseline justify-between gap-3">
-              <p className="text-[13px] font-medium text-zinc-900">
-                Select marketplace reports
-              </p>
-              <p className="text-[12px] text-zinc-500">
-                {options.length} marketplace{options.length === 1 ? "" : "s"} detected
+              <p className="text-[13px] font-medium text-zinc-900">Select reports</p>
+              <p className="text-[12px] text-zinc-400">
+                {options.length} found
               </p>
             </div>
 
@@ -429,9 +419,6 @@ export function UploadFlow() {
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               Processing workbook
             </p>
-            <p className="mt-0.5 text-[12px] text-zinc-500">
-              Master mapping loaded once and applied to every marketplace
-            </p>
 
             <ul className="mt-3 flex flex-col gap-2">
               {Object.entries(sheetStates).map(([sheet, state]) => (
@@ -463,19 +450,15 @@ export function UploadFlow() {
                         : state.stage === "parsing"
                           ? "Parsing"
                           : state.stage === "parsed"
-                            ? `Parsed ${state.rows.toLocaleString("en-IN")} rows`
+                            ? `${state.rows.toLocaleString("en-IN")} rows`
                             : state.stage === "saving"
-                              ? "Saving rows"
+                              ? "Saving"
                               : state.stage === "failed"
                                 ? state.error
                                 : `${state.rows.toLocaleString("en-IN")} rows${
                                     state.period
-                                      ? ` · ${state.period.from} → ${state.period.to}`
+                                      ? ` · ${state.period.from} – ${state.period.to}`
                                       : ""
-                                  } · ${
-                                    state.erpConfigured
-                                      ? "ERP reconciliation configured"
-                                      : "ERP reconciliation not configured"
                                   }`}
                     </span>
                   </span>

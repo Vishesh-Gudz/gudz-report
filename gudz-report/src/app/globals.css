@@ -42,3 +42,30 @@ body {
   top: 0;
   z-index: 1;
 }
+
+/* One visible focus treatment across the app. The browser default differs per
+   engine and disappears entirely on styled controls, which is how a keyboard
+   user ends up navigating a table blind. */
+:focus-visible {
+  outline: 2px solid #18181b;
+  outline-offset: 1px;
+}
+
+/* The drawer slides rather than appears — the only motion in the product, and
+   it is there to show where the panel came from. */
+@keyframes drawer-in {
+  from {
+    transform: translateX(1rem);
+    opacity: 0;
+  }
+}
+
+.drawer-panel {
+  animation: drawer-in 140ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-panel {
+    animation: none;
+  }
+}

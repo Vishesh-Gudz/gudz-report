@@ -1,18 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { Download } from "lucide-react";
 
 import type { SnapshotView } from "@/lib/report/snapshot-model";
 import { buildExport, exportFileName, toCsv } from "@/lib/report/export";
-import {
-  CURRENT_SOH,
-  GRN,
-  REPORT_SUBTITLE,
-  REPORT_TITLE,
-  SALES_QUANTITY,
-} from "@/lib/report/vocabulary";
+import { REPORT_TITLE } from "@/lib/report/vocabulary";
 
 /**
  * The frame: what this report covers, and what you can do with it.
@@ -94,99 +89,76 @@ export function ReportShell({
   return (
     <div className="flex min-h-full flex-col bg-zinc-50">
       <header className="border-b border-zinc-200 bg-white">
-        <div className="mx-auto flex w-full max-w-[100rem] flex-wrap items-end justify-between gap-4 px-6 py-5">
-          <div className="min-w-0">
-            <p className="text-[12px] font-medium tracking-wide text-zinc-500 uppercase">
-              Healthy Master
-            </p>
-            <h1 className="mt-0.5 text-[20px] leading-tight font-semibold tracking-tight text-zinc-900">
+        <div className="mx-auto flex w-full max-w-[110rem] flex-wrap items-center justify-between gap-3 px-5 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <Image
+              src="/icon.png"
+              alt=""
+              width={20}
+              height={20}
+              className="rounded-sm"
+              priority
+            />
+            <h1 className="text-[15px] font-semibold tracking-tight text-zinc-900">
               {REPORT_TITLE}
             </h1>
-            <p className="mt-1 text-[13px] text-zinc-500">{REPORT_SUBTITLE}</p>
+            <span className="text-zinc-300" aria-hidden>
+              /
+            </span>
+            <p className="min-w-0 truncate text-[13px] text-zinc-600">
+              <span className="capitalize">{marketplaceLabel}</span>
+              <span className="text-zinc-300"> · </span>
+              {snapshot.periodStart && snapshot.periodEnd
+                ? `${formatDay(snapshot.periodStart)} – ${formatDay(snapshot.periodEnd)}`
+                : snapshot.periodsDiffer
+                  ? "Multiple periods"
+                  : "No period"}
+            </p>
           </div>
 
-          <div className="flex flex-wrap items-end gap-6">
-            <dl className="flex gap-6">
-              <div>
-                <dt className="text-[11px] tracking-wide text-zinc-500 uppercase">
-                  Marketplace
-                </dt>
-                <dd className="mt-0.5 text-[14px] font-medium text-zinc-900 capitalize">
-                  {marketplaceLabel}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[11px] tracking-wide text-zinc-500 uppercase">Period</dt>
-                <dd className="mt-0.5 text-[14px] font-medium text-zinc-900">
-                  {snapshot.periodStart && snapshot.periodEnd
-                    ? `${formatDay(snapshot.periodStart)} — ${formatDay(snapshot.periodEnd)}`
-                    : snapshot.periodsDiffer
-                      ? "Multiple periods"
-                      : "—"}
-                </dd>
-                <dd className="mt-0.5 text-[11px] text-zinc-400">
-                  Saved{" "}
-                  {new Date(snapshot.createdAt).toLocaleDateString("en-GB", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </dd>
-              </div>
-            </dl>
-
-            <div className="flex items-center gap-2">
-              <Link
-                href="/?upload=1"
-                className="flex h-8 items-center rounded border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50"
-              >
-                New report
-              </Link>
-              <Link
-                href="/"
-                className="flex h-8 items-center rounded border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50"
-              >
-                All reports
-              </Link>
-              <button
-                type="button"
-                onClick={exportCsv}
-                disabled={snapshot.rows.length === 0}
-                className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
-              >
-                <Download className="h-3.5 w-3.5" aria-hidden />
-                CSV
-              </button>
-              <button
-                type="button"
-                onClick={exportXlsx}
-                disabled={snapshot.rows.length === 0 || busy}
-                className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-40"
-              >
-                <Download className="h-3.5 w-3.5" aria-hidden />
-                {busy ? "Preparing…" : "Excel"}
-              </button>
-              {/* Programmatic download target: the file is generated in the
-                  browser, so there is no URL until the click happens. */}
-              <a ref={anchorRef} className="hidden" aria-hidden>
-                Download
-              </a>
-            </div>
+          <div className="flex items-center gap-1.5">
+            <Link
+              href="/?upload=1"
+              className="flex h-8 items-center rounded px-2.5 text-[13px] text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              New report
+            </Link>
+            <Link
+              href="/"
+              className="flex h-8 items-center rounded px-2.5 text-[13px] text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              All reports
+            </Link>
+            <span className="mx-1 h-4 w-px bg-zinc-200" aria-hidden />
+            <button
+              type="button"
+              onClick={exportCsv}
+              disabled={snapshot.rows.length === 0}
+              className="h-8 rounded border border-zinc-200 px-2.5 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+            >
+              CSV
+            </button>
+            <button
+              type="button"
+              onClick={exportXlsx}
+              disabled={snapshot.rows.length === 0 || busy}
+              className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-40"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden />
+              {busy ? "Preparing" : "Excel"}
+            </button>
+            {/* Programmatic download target: the file is generated in the
+                browser, so there is no URL until the click happens. */}
+            <a ref={anchorRef} className="hidden" aria-hidden>
+              Download
+            </a>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[100rem] flex-1 flex-col gap-5 px-6 py-6">
+      <main className="mx-auto flex w-full max-w-[110rem] flex-1 flex-col px-5 py-4">
         {children}
       </main>
-
-      <footer className="border-t border-zinc-200 bg-white">
-        <div className="mx-auto w-full max-w-[100rem] px-6 py-3 text-[11px] text-zinc-400">
-          {CURRENT_SOH.label} from {CURRENT_SOH.source} · {GRN.label} from {GRN.source} ·{" "}
-          {SALES_QUANTITY.label} from the {SALES_QUANTITY.source.toLowerCase()} ·{" "}
-          {snapshot.sourceFileName}
-        </div>
-      </footer>
     </div>
   );
 }

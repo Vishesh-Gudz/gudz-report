@@ -57,7 +57,6 @@ export function ReportView({
         marketplaceCount={marketplace ? 1 : marketplaces.length}
         monthCount={month ? 1 : months.length}
       />
-
       <SohTable
         rows={visible}
         marketplaces={marketplaces}

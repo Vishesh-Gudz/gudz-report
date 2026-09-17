@@ -28,40 +28,34 @@
 
 export const REPORT_TITLE = "SOH Report";
 
-export const REPORT_SUBTITLE =
-  "Stock, goods received and sales by product and month";
+/** Kept for the document title and the export; the header shows metadata instead. */
+export const REPORT_SUBTITLE = "Stock, goods received and sales by product and month";
 
 export const CURRENT_SOH = {
   label: "Current SOH",
   source: "ERP live stock",
+  /** Shown on hover, not on the page. */
   description:
-    "Available stock in Healthy Master's own locations right now, after deducting what is blocked by open orders. A live position, not stock held at the end of the month.",
+    "Available stock in Healthy Master's own locations now, after blocked stock. Not month-end stock.",
 } as const;
 
 export const GRN = {
   label: "GRN",
   source: "ERP customer GRN",
   description:
-    "What the customer recorded receiving, from the ERP's customer GRN register. This is not the invoiced quantity.",
+    "What the customer recorded receiving, from the ERP customer GRN register. Not the invoiced quantity.",
   awaiting: "Awaiting customer GRN",
 } as const;
 
 export const SALES_QUANTITY = {
   label: "Sales Quantity",
   source: "Marketplace report",
-  description:
-    "Units the marketplace reported selling in that month, from the uploaded report.",
+  description: "Units the marketplace reported selling that month.",
 } as const;
 
-export const DAMAGE = {
-  label: "Damage",
-  description: "No source is connected yet, so this reads zero for every row.",
-} as const;
+export const DAMAGE = { label: "Damage" } as const;
 
-export const RETURNED = {
-  label: "Returned",
-  description: "No source is connected yet, so this reads zero for every row.",
-} as const;
+export const RETURNED = { label: "Returned" } as const;
 
 /** Mapping wording, so the table and the detail panel cannot drift apart. */
 export const MAPPING_LABELS = {

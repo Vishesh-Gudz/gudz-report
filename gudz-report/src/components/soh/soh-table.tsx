@@ -67,7 +67,7 @@ function MappingPill({ row }: { row: SnapshotRow }) {
   return (
     <span
       title={row.mappingReason}
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${MAPPING_STYLES[row.mappingStatus]}`}
+      className={`inline-flex items-center rounded border px-1.5 py-px text-[10.5px] font-medium whitespace-nowrap ${MAPPING_STYLES[row.mappingStatus]}`}
     >
       {MAPPING_LABELS[row.mappingStatus]}
     </span>
@@ -255,13 +255,13 @@ export function SohTable({
 
   return (
     <section className="flex flex-col">
-      <div className="flex flex-wrap items-center gap-2 border border-b-0 border-zinc-200 bg-white px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-5 py-2.5">
         {marketplaces.length > 1 ? (
           <select
             value={marketplace}
             onChange={(event) => onMarketplaceChange(event.target.value)}
             aria-label="Filter by marketplace"
-            className="h-8 rounded border border-zinc-200 bg-white px-2 text-[13px] font-medium text-zinc-900 capitalize focus:border-zinc-400 focus:outline-none"
+            className="h-7 rounded border border-zinc-200 bg-white px-2 text-[12px] font-medium text-zinc-900 capitalize hover:border-zinc-300"
           >
             <option value="">All marketplaces</option>
             {marketplaces.map((name) => (
@@ -277,7 +277,7 @@ export function SohTable({
             value={month}
             onChange={(event) => onMonthChange(event.target.value)}
             aria-label="Filter by month"
-            className="h-8 rounded border border-zinc-200 bg-white px-2 text-[13px] text-zinc-700 focus:border-zinc-400 focus:outline-none"
+            className="h-7 rounded border border-zinc-200 bg-white px-2 text-[12px] text-zinc-700 hover:border-zinc-300"
           >
             <option value="">All months</option>
             {months.map((value) => (
@@ -290,20 +290,20 @@ export function SohTable({
 
         <div className="relative">
           <Search
-            className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
+            className="pointer-events-none absolute top-1/2 left-2 h-3 w-3 -translate-y-1/2 text-zinc-400"
             aria-hidden
           />
           <input
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search product, SKU, EAN or marketplace ID"
+            placeholder="Search products"
             aria-label="Search products"
-            className="h-8 w-72 rounded border border-zinc-200 bg-white pr-2 pl-8 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none"
+            className="h-7 w-64 rounded border border-zinc-200 bg-white pr-2 pl-7 text-[12px] text-zinc-900 placeholder:text-zinc-400 hover:border-zinc-300"
           />
         </div>
 
-        <label className="flex items-center gap-1.5 text-[13px] text-zinc-700">
+        <label className="flex items-center gap-1.5 text-[12px] text-zinc-700">
           <input
             type="checkbox"
             checked={needsReview}
@@ -322,7 +322,7 @@ export function SohTable({
               onMarketplaceChange("");
               onMonthChange("");
             }}
-            className="h-8 rounded px-2 text-[13px] text-zinc-500 hover:text-zinc-900"
+            className="h-7 rounded px-1.5 text-[12px] text-zinc-500 hover:text-zinc-900"
           >
             Clear
           </button>
@@ -332,7 +332,7 @@ export function SohTable({
           <button
             type="button"
             onClick={() => setShowColumns((open) => !open)}
-            className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-200 px-2 text-[13px] text-zinc-600 hover:bg-zinc-50"
+            className="inline-flex h-7 items-center gap-1.5 rounded border border-zinc-200 px-2 text-[12px] text-zinc-600 hover:bg-zinc-50"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
             Columns
@@ -362,8 +362,8 @@ export function SohTable({
         </div>
       </div>
 
-      <div className="max-h-[calc(100vh-20rem)] min-h-[16rem] overflow-auto border border-zinc-200 bg-white">
-        <table className="w-full min-w-[72rem] border-collapse text-[13px]">
+      <div className="max-h-[calc(100vh-19rem)] min-h-[18rem] overflow-auto bg-white">
+        <table className="w-full min-w-[68rem] border-collapse text-[12.5px]">
           <thead className="sticky-head">
             {table.getHeaderGroups().map((group) => (
               <tr key={group.id}>
@@ -376,7 +376,7 @@ export function SohTable({
                       key={header.id}
                       scope="col"
                       onClick={() => header.column.toggleSorting()}
-                      className={`cursor-pointer border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] font-medium tracking-wide text-zinc-500 uppercase select-none hover:text-zinc-900 ${
+                      className={`cursor-pointer border-b border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[10.5px] font-medium tracking-wide text-zinc-500 uppercase select-none hover:text-zinc-900 ${
                         numeric ? "text-right" : "text-left"
                       }`}
                     >
@@ -402,7 +402,7 @@ export function SohTable({
           <tbody>
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-3 py-16 text-center text-zinc-500">
+                <td colSpan={columns.length} className="px-3 py-20 text-center text-[13px] text-zinc-500">
                   {rows.length === 0
                     ? "This report has no rows."
                     : "No row matches these filters."}
@@ -429,7 +429,7 @@ export function SohTable({
                     {row.getAllCells().map((cell, columnIndex) => (
                       <td
                         key={cell.id}
-                        className={`px-3 py-2 whitespace-nowrap text-zinc-700 ${
+                        className={`px-3 py-[5px] whitespace-nowrap text-zinc-700 ${
                           columnIndex >= FIRST_NUMERIC && columnIndex <= LAST_NUMERIC
                             ? "text-right"
                             : ""
@@ -447,20 +447,20 @@ export function SohTable({
           {filtered.length > 0 ? (
             <tfoot>
               <tr className="border-t border-zinc-300 bg-zinc-50 font-medium text-zinc-900">
-                <td className="px-3 py-2" colSpan={FIRST_NUMERIC}>
+                <td className="px-3 py-1.5" colSpan={FIRST_NUMERIC}>
                   {isFiltered
                     ? `${num.format(filtered.length)} of ${num.format(rows.length)} rows (filtered)`
                     : `${num.format(rows.length)} rows`}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-1.5 text-right">
                   <Figure value={totals.currentSoh} />
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-1.5 text-right">
                   <Figure value={totals.grn} title={GRN.awaiting} />
                 </td>
-                <td className="px-3 py-2 text-right">{num.format(totals.salesQuantity)}</td>
-                <td className="px-3 py-2 text-right">{num.format(totals.damage)}</td>
-                <td className="px-3 py-2 text-right">{num.format(totals.returned)}</td>
+                <td className="px-3 py-1.5 text-right">{num.format(totals.salesQuantity)}</td>
+                <td className="px-3 py-1.5 text-right">{num.format(totals.damage)}</td>
+                <td className="px-3 py-1.5 text-right">{num.format(totals.returned)}</td>
                 <td />
               </tr>
             </tfoot>
@@ -468,7 +468,7 @@ export function SohTable({
         </table>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 border border-t-0 border-zinc-200 bg-white px-3 py-2 text-[13px] text-zinc-500">
+      <div className="flex flex-wrap items-center gap-2.5 border-t border-zinc-200 bg-white px-5 py-2 text-[12px] text-zinc-500">
         <span>
           Page {pageIndex + 1} of {Math.max(1, table.getPageCount())}
         </span>
@@ -476,7 +476,7 @@ export function SohTable({
           type="button"
           onClick={() => table.previousPage()}
           disabled={!table.getCanPreviousPage()}
-          className="rounded border border-zinc-200 px-2 py-1 text-zinc-700 disabled:opacity-40 hover:enabled:bg-zinc-50"
+          className="rounded border border-zinc-200 px-2 py-0.5 text-zinc-700 disabled:opacity-40 hover:enabled:bg-zinc-50"
         >
           Previous
         </button>
@@ -484,7 +484,7 @@ export function SohTable({
           type="button"
           onClick={() => table.nextPage()}
           disabled={!table.getCanNextPage()}
-          className="rounded border border-zinc-200 px-2 py-1 text-zinc-700 disabled:opacity-40 hover:enabled:bg-zinc-50"
+          className="rounded border border-zinc-200 px-2 py-0.5 text-zinc-700 disabled:opacity-40 hover:enabled:bg-zinc-50"
         >
           Next
         </button>
@@ -494,7 +494,7 @@ export function SohTable({
           <select
             value={pageSize}
             onChange={(event) => table.setPageSize(Number(event.target.value))}
-            className="rounded border border-zinc-200 bg-white px-1.5 py-1 text-zinc-700 focus:outline-none"
+            className="rounded border border-zinc-200 bg-white px-1 py-0.5 text-zinc-700"
           >
             {[25, 50, 100, 250].map((size) => (
               <option key={size} value={size}>

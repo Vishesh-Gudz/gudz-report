@@ -1,67 +1,83 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowUpRight, Check, Minus, XCircle } from "lucide-react";
 
 import type { DataQualityNote } from "@/lib/report/snapshot-model";
 
 /**
- * What the report knows and does not, decided when the snapshot was built.
+ * What the report knows and does not, in one line.
  *
- * These notes are stored with the snapshot rather than recomputed on open, so a
- * report reopened next month explains itself with the facts that were true when
- * it was made — the same reason its numbers do not move.
+ * Deliberately not a warning panel. These are standing facts about the data —
+ * how much is mapped, whether GRN exists — and a reader checks them the way they
+ * check a footnote, not the way they read an alert. A banner would be dismissed
+ * once and ignored thereafter.
+ *
+ * The notes are stored with the snapshot rather than recomputed, so a report
+ * reopened next month explains itself with the facts that were true when it was
+ * made — the same reason its numbers do not move. The full sentence is on hover.
  */
 
-const ICONS = { ok: Check, warn: AlertTriangle, absent: Minus, bad: XCircle } as const;
-const TONES = {
-  ok: "text-emerald-600",
-  warn: "text-amber-600",
-  absent: "text-zinc-400",
-  bad: "text-red-600",
+const num = new Intl.NumberFormat("en-IN");
+
+const DOT = {
+  ok: "bg-emerald-500",
+  warn: "bg-amber-500",
+  absent: "bg-zinc-300",
+  bad: "bg-red-500",
 } as const;
 
 export function DataQualityPanel({
   notes,
-  reviewHref,
+  mapped,
+  total,
   needsReview,
+  reviewHref,
 }: {
   notes: DataQualityNote[];
-  reviewHref: string;
+  mapped: number;
+  total: number;
   needsReview: number;
+  reviewHref: string;
 }) {
-  if (notes.length === 0) return null;
+  // Titles are already short; the detail is the long-form explanation and stays
+  // on hover so the line reads as a status rather than a paragraph.
+  const rest = notes.filter(
+    (note) => !note.title.includes("matched to an ERP product"),
+  );
 
   return (
-    <section className="border border-zinc-200 bg-white">
-      <header className="border-b border-zinc-200 px-5 py-3">
-        <h2 className="text-[13px] font-semibold text-zinc-900">Data quality</h2>
-      </header>
-      <ul>
-        {notes.map((note) => {
-          const Icon = ICONS[note.state];
-          const showReview = needsReview > 0 && note.title.includes("matched to an ERP");
-          return (
-            <li
-              key={note.title}
-              className="flex gap-3 border-b border-zinc-100 px-5 py-3 last:border-0"
-            >
-              <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${TONES[note.state]}`} aria-hidden />
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-zinc-900">{note.title}</p>
-                <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500">{note.detail}</p>
-              </div>
-              {showReview ? (
-                <Link
-                  href={reviewHref}
-                  className="inline-flex shrink-0 items-center gap-1 self-center rounded border border-zinc-200 px-2 py-1 text-[12px] text-zinc-700 hover:bg-zinc-50"
-                >
-                  Review
-                  <ArrowUpRight className="h-3 w-3" aria-hidden />
-                </Link>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
+    <section className="flex flex-wrap items-center gap-x-5 gap-y-2 border border-zinc-200 bg-white px-5 py-3 text-[12px]">
+      <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
+        Data quality
+      </span>
+
+      {total > 0 ? (
+        <span className="flex items-center gap-1.5 text-zinc-700">
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${needsReview > 0 ? DOT.warn : DOT.ok}`}
+            aria-hidden
+          />
+          {num.format(mapped)} / {num.format(total)} mapped
+        </span>
+      ) : null}
+
+      {needsReview > 0 ? (
+        <Link
+          href={reviewHref}
+          className="flex items-center gap-1.5 text-zinc-700 underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-900"
+        >
+          {num.format(needsReview)} need review
+        </Link>
+      ) : null}
+
+      {rest.map((note) => (
+        <span
+          key={note.title}
+          title={note.detail}
+          className="flex items-center gap-1.5 text-zinc-600"
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${DOT[note.state]}`} aria-hidden />
+          {note.title}
+        </span>
+      ))}
     </section>
   );
 }
