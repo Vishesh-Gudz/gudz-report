@@ -2,10 +2,15 @@
 
 import { useMemo, useState } from "react";
 
+import { ExportMenu } from "./export-menu";
 import { ProductDrawer } from "./product-drawer";
 import { SohTable } from "./soh-table";
 import { SummaryStrip } from "./summary-strip";
-import { totalsFor, type SnapshotRow } from "@/lib/report/snapshot-model";
+import {
+  totalsFor,
+  type SnapshotRow,
+  type SnapshotView,
+} from "@/lib/report/snapshot-model";
 
 /**
  * Holds the report's interaction state: which marketplace, which month, which
@@ -17,10 +22,12 @@ import { totalsFor, type SnapshotRow } from "@/lib/report/snapshot-model";
  */
 
 export function ReportView({
+  snapshot,
   rows,
   marketplaces,
   months,
 }: {
+  snapshot: SnapshotView;
   rows: SnapshotRow[];
   marketplaces: string[];
   months: string[];
@@ -59,6 +66,7 @@ export function ReportView({
       />
       <SohTable
         rows={visible}
+        exportSlot={<ExportMenu snapshot={snapshot} visibleRows={visible} />}
         marketplaces={marketplaces}
         marketplace={marketplace}
         onMarketplaceChange={(value) => {

@@ -115,7 +115,12 @@ export default async function HomePage({
       <ReportShell snapshot={snapshot}>
         <div className="border border-zinc-200 bg-white">
           <MarketplacePeriods sections={snapshot.sections} />
-          <ReportView rows={snapshot.rows} marketplaces={marketplaces} months={months} />
+          <ReportView
+            snapshot={snapshot}
+            rows={snapshot.rows}
+            marketplaces={marketplaces}
+            months={months}
+          />
         </div>
 
         <div className="mt-3">

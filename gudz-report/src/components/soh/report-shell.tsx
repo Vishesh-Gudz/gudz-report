@@ -1,12 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { Download } from "lucide-react";
 
 import type { SnapshotView } from "@/lib/report/snapshot-model";
-import { buildExport, exportFileName, toCsv } from "@/lib/report/export";
 import { REPORT_TITLE } from "@/lib/report/vocabulary";
 
 /**
@@ -39,52 +36,13 @@ export function ReportShell({
   snapshot: SnapshotView;
   children: React.ReactNode;
 }) {
-  const anchorRef = useRef<HTMLAnchorElement>(null);
-  const [busy, setBusy] = useState(false);
-
   const marketplaceLabel =
     snapshot.marketplaces.length === 1
       ? snapshot.marketplaces[0]!
       : `All (${snapshot.marketplaces.length})`;
 
-  function download(blob: Blob, fileName: string) {
-    const anchor = anchorRef.current;
-    if (!anchor) return;
-    const url = URL.createObjectURL(blob);
-    anchor.href = url;
-    anchor.download = fileName;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }
 
-  function exportCsv() {
-    // A BOM, so Excel reads the product names as UTF-8 rather than mojibake.
-    download(
-      new Blob(["﻿", toCsv(snapshot.rows)], { type: "text/csv;charset=utf-8" }),
-      exportFileName(marketplaceLabel, snapshot.periodStart, snapshot.createdAt, "csv"),
-    );
-  }
 
-  async function exportXlsx() {
-    setBusy(true);
-    try {
-      // Loaded on demand. The sheet library is several hundred kilobytes and
-      // most readers never export, so it stays out of the page bundle.
-      const XLSX = await import("xlsx");
-      const sheet = XLSX.utils.aoa_to_sheet(buildExport(snapshot.rows));
-      const book = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(book, sheet, "SOH Report");
-      const bytes = XLSX.write(book, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
-      download(
-        new Blob([bytes], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }),
-        exportFileName(marketplaceLabel, snapshot.periodStart, snapshot.createdAt, "xlsx"),
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="flex min-h-full flex-col bg-zinc-50">
@@ -129,29 +87,6 @@ export function ReportShell({
             >
               All reports
             </Link>
-            <span className="mx-1 h-4 w-px bg-zinc-200" aria-hidden />
-            <button
-              type="button"
-              onClick={exportCsv}
-              disabled={snapshot.rows.length === 0}
-              className="h-8 rounded border border-zinc-200 px-2.5 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
-            >
-              CSV
-            </button>
-            <button
-              type="button"
-              onClick={exportXlsx}
-              disabled={snapshot.rows.length === 0 || busy}
-              className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-40"
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden />
-              {busy ? "Preparing" : "Excel"}
-            </button>
-            {/* Programmatic download target: the file is generated in the
-                browser, so there is no URL until the click happens. */}
-            <a ref={anchorRef} className="hidden" aria-hidden>
-              Download
-            </a>
           </div>
         </div>
       </header>

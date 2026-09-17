@@ -193,6 +193,7 @@ const LAST_NUMERIC = 9;
 
 export function SohTable({
   rows,
+  exportSlot,
   marketplaces,
   marketplace,
   onMarketplaceChange,
@@ -203,6 +204,8 @@ export function SohTable({
   selectedId,
 }: {
   rows: SnapshotRow[];
+  /** The export control, rendered by the parent which knows the snapshot. */
+  exportSlot?: React.ReactNode;
   marketplaces: string[];
   marketplace: string;
   onMarketplaceChange: (value: string) => void;
@@ -333,7 +336,8 @@ export function SohTable({
           </button>
         ) : null}
 
-        <div className="relative ml-auto">
+        <div className="ml-auto flex items-center gap-1.5">
+        <div className="relative">
           <button
             type="button"
             onClick={() => setShowColumns((open) => !open)}
@@ -364,6 +368,8 @@ export function SohTable({
               ))}
             </div>
           ) : null}
+        </div>
+        {exportSlot}
         </div>
       </div>
 
