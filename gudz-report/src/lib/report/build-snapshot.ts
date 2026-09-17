@@ -236,7 +236,12 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       for (const [key, entry] of grn.byItemMonth) {
         if (claimed.has(key)) continue;
 
-        erpItemIds.add(entry.itemId);
+        // Deliberately not added to `erpItemIds`, so these rows carry no stock
+        // figure. Current SOH answers "what is on hand for the products this
+        // marketplace sells", and a product the marketplace never listed is not
+        // one of them — counting its warehouse stock here would inflate the
+        // headline by every item ever invoiced. The row exists to account for
+        // goods received, which is the one thing it does report.
         grnQuantity += entry.quantity;
 
         const item = catalog?.itemForSku(entry.itemSku) ?? null;
@@ -367,9 +372,13 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
 
       const withStock: SnapshotRowInput[] = group.rows.map((row) => ({
         ...row,
-        currentSoh: row.erpItemId
-          ? (stock.byItemId.get(row.erpItemId)?.available ?? null)
-          : null,
+        // `sourceRows === 0` marks a supplementary GRN-only row: the product was
+        // invoiced to this marketplace but its report never listed it. Those
+        // carry no stock figure — see the note where they are built.
+        currentSoh:
+          row.erpItemId && row.sourceRows > 0
+            ? (stock.byItemId.get(row.erpItemId)?.available ?? null)
+            : null,
       }));
 
       for (let offset = 0; offset < withStock.length; offset += 400) {
