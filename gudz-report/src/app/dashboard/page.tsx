@@ -153,7 +153,7 @@ export default async function DashboardPage({
         <ReportTable rows={lines} />
       </section>
 
-      <ProductSummary rows={model.skuReconciliation.rows} />
+      <ProductSummary result={model.skuReconciliation} />
 
       <DataQuality kpis={model.kpis} unmatched={model.unmatched} />
     </main>

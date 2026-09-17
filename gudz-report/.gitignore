@@ -36,6 +36,10 @@ yarn-error.log*
 .env.*
 !.env.example
 
+# Local Convex backend: the downloaded binary and this machine's database.
+# Machine-specific state, not source — and it holds real imported client data.
+.convex/
+
 # vercel
 .vercel
 
