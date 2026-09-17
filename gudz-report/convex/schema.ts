@@ -89,6 +89,29 @@ export default defineSchema({
     .index("by_orderDate", ["orderDate"]),
 
   /**
+   * Which customer GSTINs belong to which marketplace.
+   *
+   * Configuration, not ERP data. "GSTIN 29… is Blinkit" is a fact about this
+   * business, so it lives here where it can be edited, rather than compiled into
+   * a generic ERP query that would then serve exactly one customer.
+   *
+   * It is keyed on GSTIN because production proved nothing else is stable:
+   * `channel` is null on about half of orders and sometimes names a marketplace
+   * on an order raised to a different party entirely, and the same buyer appears
+   * under several customer records and spellings.
+   *
+   * One marketplace holds several GSTINs — regional entities register separately.
+   */
+  marketplaces: defineTable({
+    marketplace: v.string(),
+    customerGstins: v.array(v.string()),
+    /** Channel strings seen on these orders. Provenance for humans, never identity. */
+    knownChannelValues: v.optional(v.array(v.string())),
+    isActive: v.boolean(),
+    updatedAt: v.number(),
+  }).index("by_marketplace", ["marketplace"]),
+
+  /**
    * The outcome of matching one spreadsheet line to one ERP sales-order line.
    *
    * `salesOrderId` / `salesOrderItemId` are ERP ids held as plain strings, not
