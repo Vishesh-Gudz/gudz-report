@@ -9,7 +9,6 @@ import {
   createPaginatedRowModel,
   createSortedRowModel,
   filterFn_includesString,
-  globalFilteringFeature,
   rowPaginationFeature,
   rowSortingFeature,
   tableFeatures,
@@ -17,32 +16,36 @@ import {
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Search, SlidersHorizontal } from "lucide-react";
 
-import type { SohProductRow } from "@/lib/report/soh-rows";
-import { SELL_IN, SELL_OUT, SKU_STATUS_HINTS, SKU_STATUS_LABELS, STOCK_ON_HAND } from "@/lib/report/vocabulary";
+import { totalsFor, type SnapshotRow } from "@/lib/report/snapshot-model";
+import {
+  CURRENT_SOH,
+  DAMAGE,
+  GRN,
+  MAPPING_LABELS,
+  RETURNED,
+  SALES_QUANTITY,
+} from "@/lib/report/vocabulary";
 
 /**
- * The report. Everything else on the page exists to frame this.
+ * The report: marketplace, product and month, one row each.
  *
- * TanStack Table v9: `useTable`, with row models registered as feature slots in
+ * TanStack Table v9 — `useTable`, with row models registered as feature slots in
  * `tableFeatures`. v8's `useReactTable` + `getCoreRowModel()` does not exist
  * here and examples written against it will not compile.
  *
- * Filtering and sorting run client-side, which is right for this dataset and
- * would be wrong for the line-level one: a report is tens of products, the whole
- * set is already on the page, so a filter sees every row rather than one server
- * page. The footer states what it is totalling so a filtered view can never be
- * mistaken for the period total.
+ * Filtering and sorting run client-side, which is right for this dataset: the
+ * snapshot is an aggregate of a few hundred rows and all of it is on the page,
+ * so a filter sees every row rather than one server page. The footer states what
+ * it is totalling so a filtered view is never mistaken for the whole report.
  *
- * Columns are deliberately few. Marketplace ids, revenue and provenance live in
- * the detail panel — a table that shows everything is a table nobody can read
- * across, and the row that matters is found by scanning, not by squinting.
+ * A missing figure is an em dash, never a zero. `—` under GRN means no goods
+ * receipt was raised; `0` would mean one was raised and recorded nothing.
  */
 
 const features = tableFeatures({
   rowSortingFeature,
   sortedRowModel: createSortedRowModel(),
   columnFilteringFeature,
-  globalFilteringFeature,
   filteredRowModel: createFilteredRowModel(),
   columnVisibilityFeature,
   rowPaginationFeature,
@@ -50,73 +53,50 @@ const features = tableFeatures({
   filterFns: { includesString: filterFn_includesString },
 });
 
-const helper = createColumnHelper<typeof features, SohProductRow>();
+const helper = createColumnHelper<typeof features, SnapshotRow>();
 
-const inr = new Intl.NumberFormat("en-IN", {
-  style: "currency",
-  currency: "INR",
-  maximumFractionDigits: 0,
-});
 const num = new Intl.NumberFormat("en-IN");
-const pct = new Intl.NumberFormat("en-IN", {
-  style: "percent",
-  maximumFractionDigits: 0,
-  signDisplay: "exceptZero",
-});
 
-const STATUS_STYLES: Record<SohProductRow["status"], string> = {
-  matched: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  variance: "border-amber-200 bg-amber-50 text-amber-800",
-  erpOnly: "border-sky-200 bg-sky-50 text-sky-700",
-  excelOnly: "border-violet-200 bg-violet-50 text-violet-700",
-};
-
-function StatusPill({ status }: { status: SohProductRow["status"] }) {
-  return (
-    <span
-      title={SKU_STATUS_HINTS[status]}
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${STATUS_STYLES[status]}`}
-    >
-      {SKU_STATUS_LABELS[status]}
-    </span>
-  );
-}
-
-const MAPPING_STYLES: Record<SohProductRow["mapping"], string> = {
+const MAPPING_STYLES: Record<SnapshotRow["mappingStatus"], string> = {
   confirmed: "border-emerald-200 bg-emerald-50 text-emerald-700",
   matched: "border-zinc-200 bg-zinc-50 text-zinc-600",
   unresolved: "border-amber-200 bg-amber-50 text-amber-800",
-  erpSide: "border-zinc-200 bg-zinc-50 text-zinc-500",
 };
 
-const MAPPING_LABELS: Record<SohProductRow["mapping"], string> = {
-  confirmed: "Confirmed",
-  matched: "Matched",
-  unresolved: "Needs review",
-  erpSide: "ERP product",
-};
-
-function MappingPill({ row }: { row: SohProductRow }) {
+function MappingPill({ row }: { row: SnapshotRow }) {
   return (
     <span
       title={row.mappingReason}
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${MAPPING_STYLES[row.mapping]}`}
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${MAPPING_STYLES[row.mappingStatus]}`}
     >
-      {MAPPING_LABELS[row.mapping]}
+      {MAPPING_LABELS[row.mappingStatus]}
     </span>
   );
 }
 
-/** A signed number. Zero reads as a muted dash, not a suspicious "0". */
-function Delta({ value, money }: { value: number | null; money?: boolean }) {
-  if (value === null) return <span className="text-zinc-300">—</span>;
-  if (value === 0) return <span className="text-zinc-300">0</span>;
-  return (
-    <span className={value > 0 ? "text-amber-700" : "text-sky-700"}>
-      {value > 0 ? "+" : "−"}
-      {money ? inr.format(Math.abs(value)) : num.format(Math.abs(value))}
-    </span>
-  );
+/** A figure, or an em dash when the source holds nothing at all. */
+function Figure({ value, title }: { value: number | null; title?: string }) {
+  if (value === null) {
+    return (
+      <span className="text-zinc-300" title={title}>
+        —
+      </span>
+    );
+  }
+  return <>{num.format(value)}</>;
+}
+
+/** `2026-06` reads as `Jun 2026`, while sorting on the underlying value. */
+export function monthLabel(month: string): string {
+  if (month === "undated") return "Undated";
+  const date = new Date(`${month}-01T00:00:00.000Z`);
+  return Number.isNaN(date.getTime())
+    ? month
+    : date.toLocaleDateString("en-GB", {
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      });
 }
 
 const columns = helper.columns([
@@ -131,7 +111,10 @@ const columns = helper.columns([
     header: "Product",
     filterFn: "includesString",
     cell: (info) => (
-      <span className="block max-w-[26rem] truncate font-medium text-zinc-900" title={info.getValue()}>
+      <span
+        className="block max-w-[24rem] truncate font-medium text-zinc-900"
+        title={info.getValue()}
+      >
         {info.getValue()}
       </span>
     ),
@@ -140,7 +123,10 @@ const columns = helper.columns([
     header: "SKU",
     filterFn: "includesString",
     cell: (info) => (
-      <span className="block max-w-[14rem] truncate font-mono text-[11px] text-zinc-500" title={info.getValue()}>
+      <span
+        className="block max-w-[13rem] truncate font-mono text-[11px] text-zinc-500"
+        title={info.getValue()}
+      >
         {info.getValue()}
       </span>
     ),
@@ -152,85 +138,73 @@ const columns = helper.columns([
       <span className="font-mono text-[11px] text-zinc-500">{info.getValue() ?? "—"}</span>
     ),
   }),
-  helper.accessor("stockAvailable", {
-    header: STOCK_ON_HAND.label,
-    cell: (info) =>
-      info.getValue() === null ? (
-        <span className="text-zinc-300" title="No live stock position for this product">
-          —
-        </span>
-      ) : (
-        num.format(info.getValue()!)
-      ),
+  helper.accessor("month", {
+    header: "Month",
+    cell: (info) => (
+      <span className="whitespace-nowrap text-zinc-700">{monthLabel(info.getValue())}</span>
+    ),
   }),
-  helper.accessor("sellIn", {
-    header: SELL_IN.label,
-    cell: (info) =>
-      info.getValue() === null ? (
-        <span
-          className="text-zinc-300"
-          title="ERP reconciliation not configured for this marketplace"
-        >
-          n/a
-        </span>
-      ) : (
-        num.format(info.getValue()!)
-      ),
+  helper.accessor("currentSoh", {
+    header: CURRENT_SOH.label,
+    cell: (info) => (
+      <Figure
+        value={info.getValue()}
+        title="No live stock position is held for this product"
+      />
+    ),
   }),
-  helper.accessor("sellOut", {
-    header: SELL_OUT.label,
+  helper.accessor("grn", {
+    header: GRN.label,
+    cell: (info) => <Figure value={info.getValue()} title={GRN.awaiting} />,
+  }),
+  helper.accessor("salesQuantity", {
+    header: SALES_QUANTITY.label,
     cell: (info) => num.format(info.getValue()),
   }),
-  helper.accessor("quantityVariance", {
-    header: "Variance",
-    cell: (info) => <Delta value={info.getValue()} />,
+  helper.accessor("damage", {
+    header: DAMAGE.label,
+    cell: (info) => num.format(info.getValue()),
   }),
-  helper.accessor("quantityVariancePct", {
-    header: "Var %",
-    cell: (info) =>
-      info.getValue() === null ? (
-        <span className="text-zinc-300">—</span>
-      ) : (
-        <span className={info.getValue()! > 0 ? "text-amber-700" : "text-sky-700"}>
-          {pct.format(info.getValue()!)}
-        </span>
-      ),
+  helper.accessor("returned", {
+    header: RETURNED.label,
+    cell: (info) => num.format(info.getValue()),
   }),
-  helper.accessor("status", {
+  helper.accessor("mappingStatus", {
     header: "Status",
-    cell: (info) => <StatusPill status={info.getValue()} />,
-  }),
-  helper.accessor("mapping", {
-    header: "Mapping",
     cell: (info) => <MappingPill row={info.row.original} />,
   }),
 ]);
 
-/** Columns a reader can turn off. Identity and the headline numbers stay. */
-const OPTIONAL_COLUMNS: { id: string; label: string }[] = [
-  { id: "marketplace", label: "Marketplace" },
+/** Columns a reader can turn off. Identity and the measures stay. */
+const OPTIONAL_COLUMNS = [
   { id: "ean", label: "EAN" },
-  { id: "stockAvailable", label: STOCK_ON_HAND.label },
-  { id: "quantityVariancePct", label: "Var %" },
-  { id: "mapping", label: "Mapping" },
-];
+  { id: "damage", label: DAMAGE.label },
+  { id: "returned", label: RETURNED.label },
+] as const;
 
-type StatusFilter = "" | SohProductRow["status"];
-type VarianceFilter = "" | "any" | "over" | "under";
+/** Numeric columns, right aligned. */
+const FIRST_NUMERIC = 5;
+const LAST_NUMERIC = 9;
 
 export function SohTable({
   rows,
   marketplaces,
   marketplace,
   onMarketplaceChange,
+  months,
+  month,
+  onMonthChange,
   onSelect,
   selectedId,
 }: {
-  rows: SohProductRow[];
+  rows: SnapshotRow[];
   marketplaces: string[];
   marketplace: string;
   onMarketplaceChange: (value: string) => void;
-  onSelect: (row: SohProductRow) => void;
+  months: string[];
+  month: string;
+  onMonthChange: (value: string) => void;
+  onSelect: (row: SnapshotRow) => void;
   selectedId: string | null;
 }) {
   // Memoised so a re-render does not hand the table a new array identity and
@@ -238,22 +212,13 @@ export function SohTable({
   const data = useMemo(() => rows, [rows]);
 
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("");
-  const [variance, setVariance] = useState<VarianceFilter>("");
+  const [needsReview, setNeedsReview] = useState(false);
   const [showColumns, setShowColumns] = useState(false);
 
-  // Applied before the table sees the data. Variance direction is not a column
-  // value, so it cannot be a column filter without inventing a hidden column.
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return data.filter((row) => {
-      if (status && row.status !== status) return false;
-      // A marketplace with no ERP customer has no variance at all, so the
-      // variance filters exclude it rather than treating null as zero.
-      if (variance !== "" && row.quantityVariance === null) return false;
-      if (variance === "any" && row.quantityVariance === 0) return false;
-      if (variance === "over" && (row.quantityVariance ?? 0) <= 0) return false;
-      if (variance === "under" && (row.quantityVariance ?? 0) >= 0) return false;
+      if (needsReview && row.mappingStatus !== "unresolved") return false;
       if (!needle) return true;
       return (
         row.productName.toLowerCase().includes(needle) ||
@@ -263,7 +228,7 @@ export function SohTable({
         (row.marketplaceItemId ?? "").toLowerCase().includes(needle)
       );
     });
-  }, [data, search, status, variance]);
+  }, [data, search, needsReview]);
 
   // The second argument is v9's state selector: it declares which slices this
   // component rerenders on and is what puts them on `table.state`. There is no
@@ -273,7 +238,7 @@ export function SohTable({
       features,
       columns,
       data: filtered,
-      initialState: { pagination: { pageIndex: 0, pageSize: 25 } },
+      initialState: { pagination: { pageIndex: 0, pageSize: 50 } },
     },
     (state) => ({
       pagination: state.pagination,
@@ -284,16 +249,7 @@ export function SohTable({
 
   const { pageIndex, pageSize } = table.state.pagination;
   const visible = table.getPaginatedRowModel().rows;
-
-  const totals = filtered.reduce(
-    (acc, row) => ({
-      sellIn: acc.sellIn + (row.sellIn ?? 0),
-      sellOut: acc.sellOut + row.sellOut,
-      stock: acc.stock + (row.stockAvailable ?? 0),
-    }),
-    { sellIn: 0, sellOut: 0, stock: 0 },
-  );
-
+  const totals = totalsFor(filtered);
   const isFiltered = filtered.length !== rows.length;
   const visibility = table.state.columnVisibility ?? {};
 
@@ -309,8 +265,24 @@ export function SohTable({
           >
             <option value="">All marketplaces</option>
             {marketplaces.map((name) => (
-              <option key={name} value={name} className="capitalize">
+              <option key={name} value={name}>
                 {name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+
+        {months.length > 1 ? (
+          <select
+            value={month}
+            onChange={(event) => onMonthChange(event.target.value)}
+            aria-label="Filter by month"
+            className="h-8 rounded border border-zinc-200 bg-white px-2 text-[13px] text-zinc-700 focus:border-zinc-400 focus:outline-none"
+          >
+            <option value="">All months</option>
+            {months.map((value) => (
+              <option key={value} value={value}>
+                {monthLabel(value)}
               </option>
             ))}
           </select>
@@ -327,43 +299,28 @@ export function SohTable({
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search product, SKU, EAN or marketplace ID"
             aria-label="Search products"
-            className="h-8 w-80 rounded border border-zinc-200 bg-white pr-2 pl-8 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none"
+            className="h-8 w-72 rounded border border-zinc-200 bg-white pr-2 pl-8 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none"
           />
         </div>
 
-        <select
-          value={status}
-          onChange={(event) => setStatus(event.target.value as StatusFilter)}
-          aria-label="Filter by status"
-          className="h-8 rounded border border-zinc-200 bg-white px-2 text-[13px] text-zinc-700 focus:border-zinc-400 focus:outline-none"
-        >
-          <option value="">All statuses</option>
-          {(["matched", "variance", "erpOnly", "excelOnly"] as const).map((value) => (
-            <option key={value} value={value}>
-              {SKU_STATUS_LABELS[value]}
-            </option>
-          ))}
-        </select>
+        <label className="flex items-center gap-1.5 text-[13px] text-zinc-700">
+          <input
+            type="checkbox"
+            checked={needsReview}
+            onChange={(event) => setNeedsReview(event.target.checked)}
+            className="h-3.5 w-3.5 accent-zinc-900"
+          />
+          Needs Review
+        </label>
 
-        <select
-          value={variance}
-          onChange={(event) => setVariance(event.target.value as VarianceFilter)}
-          aria-label="Filter by variance"
-          className="h-8 rounded border border-zinc-200 bg-white px-2 text-[13px] text-zinc-700 focus:border-zinc-400 focus:outline-none"
-        >
-          <option value="">Any variance</option>
-          <option value="any">Non-zero only</option>
-          <option value="over">Sell-out above sell-in</option>
-          <option value="under">Sell-in above sell-out</option>
-        </select>
-
-        {isFiltered ? (
+        {isFiltered || marketplace || month ? (
           <button
             type="button"
             onClick={() => {
               setSearch("");
-              setStatus("");
-              setVariance("");
+              setNeedsReview(false);
+              onMarketplaceChange("");
+              onMonthChange("");
             }}
             className="h-8 rounded px-2 text-[13px] text-zinc-500 hover:text-zinc-900"
           >
@@ -381,7 +338,7 @@ export function SohTable({
             Columns
           </button>
           {showColumns ? (
-            <div className="absolute right-0 z-20 mt-1 w-52 rounded border border-zinc-200 bg-white p-1 shadow-sm">
+            <div className="absolute right-0 z-20 mt-1 w-48 rounded border border-zinc-200 bg-white p-1 shadow-sm">
               {OPTIONAL_COLUMNS.map((column) => (
                 <label
                   key={column.id}
@@ -405,23 +362,23 @@ export function SohTable({
         </div>
       </div>
 
-      <div className="max-h-[calc(100vh-18rem)] min-h-[16rem] overflow-auto border border-zinc-200 bg-white">
-        <table className="w-full min-w-[68rem] border-collapse text-[13px]">
+      <div className="max-h-[calc(100vh-20rem)] min-h-[16rem] overflow-auto border border-zinc-200 bg-white">
+        <table className="w-full min-w-[72rem] border-collapse text-[13px]">
           <thead className="sticky-head">
             {table.getHeaderGroups().map((group) => (
               <tr key={group.id}>
                 {group.headers.map((header, columnIndex) => {
                   const sorted = header.column.getIsSorted();
-                  const numeric = columnIndex >= 4 && columnIndex <= 8;
+                  const numeric =
+                    columnIndex >= FIRST_NUMERIC && columnIndex <= LAST_NUMERIC;
                   return (
                     <th
                       key={header.id}
                       scope="col"
                       onClick={() => header.column.toggleSorting()}
-                      className={`cursor-pointer border-b border-zinc-200 bg-zinc-50 px-3 py-2 font-medium tracking-wide text-zinc-500 uppercase select-none hover:text-zinc-900 ${
+                      className={`cursor-pointer border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] font-medium tracking-wide text-zinc-500 uppercase select-none hover:text-zinc-900 ${
                         numeric ? "text-right" : "text-left"
                       }`}
-                      style={{ fontSize: "11px" }}
                     >
                       <span
                         className={`inline-flex items-center gap-1 ${numeric ? "flex-row-reverse" : ""}`}
@@ -445,18 +402,15 @@ export function SohTable({
           <tbody>
             {visible.length === 0 ? (
               <tr>
-                <td
-                  colSpan={columns.length}
-                  className="px-3 py-16 text-center text-zinc-500"
-                >
+                <td colSpan={columns.length} className="px-3 py-16 text-center text-zinc-500">
                   {rows.length === 0
-                    ? "This report has no products."
-                    : "No product matches these filters."}
+                    ? "This report has no rows."
+                    : "No row matches these filters."}
                 </td>
               </tr>
             ) : (
               visible.map((row) => {
-                const selected = row.original.sku === selectedId;
+                const selected = row.original.id === selectedId;
                 return (
                   <tr
                     key={row.id}
@@ -475,10 +429,10 @@ export function SohTable({
                     {row.getAllCells().map((cell, columnIndex) => (
                       <td
                         key={cell.id}
-                        className={`px-3 py-2 whitespace-nowrap ${
-                          columnIndex >= 4 && columnIndex <= 8
-                            ? "text-right text-zinc-700"
-                            : "text-zinc-700"
+                        className={`px-3 py-2 whitespace-nowrap text-zinc-700 ${
+                          columnIndex >= FIRST_NUMERIC && columnIndex <= LAST_NUMERIC
+                            ? "text-right"
+                            : ""
                         }`}
                       >
                         <table.FlexRender cell={cell} />
@@ -493,20 +447,21 @@ export function SohTable({
           {filtered.length > 0 ? (
             <tfoot>
               <tr className="border-t border-zinc-300 bg-zinc-50 font-medium text-zinc-900">
-                <td className="px-3 py-2" colSpan={4}>
+                <td className="px-3 py-2" colSpan={FIRST_NUMERIC}>
                   {isFiltered
-                    ? `${num.format(filtered.length)} of ${num.format(rows.length)} products (filtered)`
-                    : `${num.format(rows.length)} products`}
+                    ? `${num.format(filtered.length)} of ${num.format(rows.length)} rows (filtered)`
+                    : `${num.format(rows.length)} rows`}
                 </td>
-                {visibility.stockAvailable === false ? null : (
-                  <td className="px-3 py-2 text-right">{num.format(totals.stock)}</td>
-                )}
-                <td className="px-3 py-2 text-right">{num.format(totals.sellIn)}</td>
-                <td className="px-3 py-2 text-right">{num.format(totals.sellOut)}</td>
                 <td className="px-3 py-2 text-right">
-                  <Delta value={totals.sellOut - totals.sellIn} />
+                  <Figure value={totals.currentSoh} />
                 </td>
-                <td colSpan={3} />
+                <td className="px-3 py-2 text-right">
+                  <Figure value={totals.grn} title={GRN.awaiting} />
+                </td>
+                <td className="px-3 py-2 text-right">{num.format(totals.salesQuantity)}</td>
+                <td className="px-3 py-2 text-right">{num.format(totals.damage)}</td>
+                <td className="px-3 py-2 text-right">{num.format(totals.returned)}</td>
+                <td />
               </tr>
             </tfoot>
           ) : null}
@@ -541,14 +496,13 @@ export function SohTable({
             onChange={(event) => table.setPageSize(Number(event.target.value))}
             className="rounded border border-zinc-200 bg-white px-1.5 py-1 text-zinc-700 focus:outline-none"
           >
-            {[25, 50, 100].map((size) => (
+            {[25, 50, 100, 250].map((size) => (
               <option key={size} value={size}>
                 {size}
               </option>
             ))}
           </select>
         </label>
-        <span className="text-zinc-400">Select a row for product detail</span>
       </div>
     </section>
   );

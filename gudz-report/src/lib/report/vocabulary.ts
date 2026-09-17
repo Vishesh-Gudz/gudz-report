@@ -1,106 +1,81 @@
 /**
- * What this report measures, and what it refuses to claim.
+ * What this report measures, in the business's own words.
  *
- * It is an SOH report, and one genuine stock figure is in it: the **live**
- * position from the ERP's balance tables, per product and location. That is
- * real, current, and labelled as current.
+ * The three columns are deliberately named after what somebody in the business
+ * would say, not after the system a number came from. An earlier version used
+ * "sell-in" and "sell-out"; they were dropped because readers consistently had
+ * to be told which was which, and a label that needs explaining is a label that
+ * will be misread when nobody is there to explain it.
  *
- * What is deliberately absent is *historical* SOH — opening and closing stock
- * for a past period. Deriving those means replaying the ERP stock ledger, and
- * the production ledger has a known sync backlog, so the result would look
- * authoritative and be wrong. The report says so on screen instead.
+ *   **Current SOH**     — Healthy Master's own available stock, right now.
+ *   **GRN**             — what the customer recorded receiving, from the ERP's
+ *                         `customer_grn` register.
+ *   **Sales Quantity**  — what the marketplace reported selling, that month.
  *
- * Around that live position sit the two flow measures:
+ * Two things this report refuses to claim:
  *
- *   **Sell-in**  — what Healthy Master invoiced *to* the marketplace. B2B
- *                  sales orders in the ERP, by `orderedQuantity`.
- *   **Sell-out** — what the marketplace says it sold *to consumers*. The rows
- *                  in the uploaded marketplace sheet.
+ *  - **GRN is not the sales order.** `orderedQuantity` is what was invoiced; a
+ *    GRN is what the marketplace booked in at their end. Relabelling one as the
+ *    other would answer a different question while looking right.
+ *  - **Current SOH is not historical SOH.** Stock at the end of a past month
+ *    would have to be replayed from a ledger with a known sync backlog. The
+ *    live position is shown, labelled as live, and month-end stock is reported
+ *    as unavailable rather than invented.
  *
- * These are different measurements of different events, separated by however
- * long stock sits in the marketplace's warehouse. They are not supposed to be
- * equal, and a period where they were equal would be the suspicious one. The
- * gap between them is the report's whole subject: sustained sell-out above
- * sell-in is the marketplace drawing down stock it already holds, and sustained
- * sell-in above sell-out is stock accumulating there.
- *
- * The variance between them is a flow difference, not a stock count, and must
- * never be presented as one: a reader who takes it for a discrepancy will go
- * looking for inventory that was never missing. The labels live here so the
- * whole UI says the same thing, and so the next screen that needs them does not
- * invent a third name.
- *
- * Field names in the data layer stay source-shaped — `erpQuantity`,
- * `excelRevenue` — because they say where a number came from, which is a
- * separate and still-true fact. This module maps source to meaning.
+ * Where a figure does not exist, the report shows an em dash. Never a zero — a
+ * zero claims the register was read and genuinely held nothing.
  */
 
 export const REPORT_TITLE = "SOH Report";
 
-/**
- * What the product is, in one line, under the title.
- *
- * The title is the client's name for this thing and stays. The subtitle carries
- * the honesty: it says which stock figure is real and which is not, before
- * anybody reads a number.
- */
 export const REPORT_SUBTITLE =
-  "Live stock position, sell-in and sell-out per product";
+  "Stock, goods received and sales by product and month";
 
-export const SELL_IN = {
-  label: "Sell-in",
-  /** Where it comes from, for a subtitle or a tooltip. */
-  source: "ERP B2B sales orders",
+export const CURRENT_SOH = {
+  label: "Current SOH",
+  source: "ERP live stock",
   description:
-    "What Healthy Master invoiced to the marketplace, from ERP B2B sales orders. Quantity is orderedQuantity; drafts and cancellations are excluded.",
+    "Available stock in Healthy Master's own locations right now, after deducting what is blocked by open orders. A live position, not stock held at the end of the month.",
 } as const;
 
-export const SELL_OUT = {
-  label: "Sell-out",
+export const GRN = {
+  label: "GRN",
+  source: "ERP customer GRN",
+  description:
+    "What the customer recorded receiving, from the ERP's customer GRN register. This is not the invoiced quantity.",
+  awaiting: "Awaiting customer GRN",
+} as const;
+
+export const SALES_QUANTITY = {
+  label: "Sales Quantity",
   source: "Marketplace report",
   description:
-    "What the marketplace reports selling to consumers, from the uploaded sheet.",
+    "Units the marketplace reported selling in that month, from the uploaded report.",
 } as const;
 
-/**
- * The one-paragraph explanation shown on the report itself.
- *
- * On the page rather than in a tooltip: somebody reading a variance for the
- * first time needs to know it is a timing difference before they treat it as an
- * error, and a tooltip is exactly where that does not get read.
- */
-export const REPORT_EXPLANATION =
-  "Sell-in is what Healthy Master invoiced to the marketplace. Sell-out is what " +
-  "the marketplace reports selling to consumers. They measure different events at " +
-  "different times, so a gap is normal rather than an error: sell-out above " +
-  "sell-in means the marketplace is drawing down stock it already holds, and " +
-  "sell-in above sell-out means stock is building up there. The stock column is " +
-  "the live position in Healthy Master's own warehouses today, not the " +
-  "marketplace's.";
-
-/** The live stock measure. Real, current, and never presented as historical. */
-export const STOCK_ON_HAND = {
-  label: "Stock on hand",
-  source: "ERP live balances",
-  description:
-    "Available stock in Healthy Master's own locations right now, after deducting what is blocked by open orders and picklists. This is a live position, not the stock held at the end of the reporting period.",
+export const DAMAGE = {
+  label: "Damage",
+  description: "No source is connected yet, so this reads zero for every row.",
 } as const;
 
-/** Column and status wording, so the table and the tiles cannot drift apart. */
-export const SKU_STATUS_LABELS = {
-  matched: "Agrees",
-  variance: "Variance",
-  /** Invoiced to the marketplace, but the marketplace reports no sales of it. */
-  erpOnly: "Sell-in only",
-  /** The marketplace sold it, but nothing was invoiced in this window. */
-  excelOnly: "Sell-out only",
+export const RETURNED = {
+  label: "Returned",
+  description: "No source is connected yet, so this reads zero for every row.",
 } as const;
 
-export const SKU_STATUS_HINTS = {
-  matched: "Sell-in and sell-out agree for this product.",
-  variance: "Both sides report this product, and the numbers differ.",
-  erpOnly:
-    "Invoiced to the marketplace in this window, but the marketplace reports no consumer sales of it.",
-  excelOnly:
-    "The marketplace reports selling this, but nothing was invoiced in this window — it may have shipped earlier, or the product may not be mapped to an ERP item.",
+/** Mapping wording, so the table and the detail panel cannot drift apart. */
+export const MAPPING_LABELS = {
+  confirmed: "Confirmed",
+  matched: "Matched",
+  unresolved: "Needs Review",
 } as const;
+
+export type MappingStatus = keyof typeof MAPPING_LABELS;
+
+/** Per-marketplace GRN standing, in the words the panel uses. */
+export const GRN_STATE_LABELS: Record<string, string> = {
+  available: "GRN available",
+  awaiting: GRN.awaiting,
+  notConfigured: "ERP not configured",
+  unavailable: "ERP unavailable",
+};

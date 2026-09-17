@@ -4,150 +4,152 @@ import { v } from "convex/values";
 /**
  * Gudz Report data model.
  *
- * Three tables, one idea: **store the normalized shape, never the raw file.**
- * A marketplace export is wide, inconsistently named and changes between
- * releases. Persisting it as a blob would push meaning back onto column headers
- * for every consumer and make a header rename an outage. Rows here are already
- * interpreted, typed and addressable by index.
+ * Four tables, one idea: **the finished report is the permanent record.**
  *
- * The ERP is not mirrored. Sales orders are fetched per reporting period and
- * cached at most transiently: they change status after the fact, and a stale
- * local copy that disagrees with the ERP is worse than a slower query, because
- * someone will trust it.
+ * An uploaded workbook is processing input — 203,000 rows across six
+ * marketplaces, read once and never queried as rows again. What anyone actually
+ * asks of it is the aggregate: marketplace by product by month, a few hundred
+ * rows. So the aggregate is stored and the raw dump is not kept at all. An
+ * earlier version wrote every row; it was slower to save than to compute and
+ * nothing ever read it back.
+ *
+ * The ERP is not mirrored either. Sell-through figures, stock and goods
+ * receipts are read live while a report is being built and then frozen into the
+ * snapshot. A local copy that drifts out of step with the ERP is worse than a
+ * slower read, because somebody will trust it.
+ *
+ * Product mappings and marketplace configuration are the exceptions: they are
+ * decisions, not data, and they are reused by every report that follows.
  */
 
 export default defineSchema({
   /**
-   * One uploaded workbook and what became of it.
+   * A finished SOH report, saved so it can be reopened without the workbook.
    *
-   * `minDate` / `maxDate` are the reporting period the file itself implies —
-   * the window the ERP is then asked for. Both are `YYYY-MM-DD`, nullable
-   * because a file whose dates could not be read has no period, and inventing
-   * one would reconcile against a window nobody chose.
+   * This is the permanent record. The uploaded spreadsheet is processing input:
+   * 203,000 raw rows across six marketplaces, written once and never read as
+   * rows again. What a reader actually needs is the aggregate — marketplace by
+   * product by month — which is a few hundred rows. Storing the aggregate and
+   * discarding the raw dump is both faster to write and the only version anyone
+   * queries.
+   *
+   * A snapshot is immutable by intent. Opening one next month must show the same
+   * numbers it showed today, so nothing recomputes it in place; a refreshed view
+   * is a new snapshot.
    */
-  imports: defineTable({
-    fileName: v.string(),
-    /**
-     * Which marketplace sheet this import came from.
-     *
-     * One workbook holds six of them, so the file name alone does not identify
-     * an import. Optional because imports created before sheet selection
-     * existed have no answer, and inventing one would attribute their rows to a
-     * marketplace nobody chose.
-     */
-    marketplace: v.optional(v.string()),
-    sheetName: v.optional(v.string()),
-    uploadedAt: v.number(),
+  reportSnapshots: defineTable({
+    sourceFileName: v.string(),
+    createdAt: v.number(),
     status: v.union(
-      v.literal("pending"),
       v.literal("processing"),
       v.literal("completed"),
       v.literal("failed"),
     ),
-    minDate: v.union(v.string(), v.null()),
-    maxDate: v.union(v.string(), v.null()),
-    totalRows: v.number(),
-    validRows: v.number(),
-    invalidRows: v.number(),
-    matchedRows: v.number(),
-    unmatchedRows: v.number(),
-    /** Set only when `status` is `failed`. Never contains a credential. */
+    /** Marketplaces that produced rows, in sheet order. */
+    marketplaces: v.array(v.string()),
+    /** Null when the sheets cover different windows. */
+    periodStart: v.union(v.string(), v.null()),
+    periodEnd: v.union(v.string(), v.null()),
+    periodsDiffer: v.boolean(),
+    /** Headline figures, computed once so every reader sees the same ones. */
+    summary: v.object({
+      marketplaces: v.number(),
+      products: v.number(),
+      rows: v.number(),
+      salesQuantity: v.number(),
+      salesValue: v.number(),
+      currentSoh: v.union(v.number(), v.null()),
+      grnQuantity: v.union(v.number(), v.null()),
+      mappedProducts: v.number(),
+      unresolvedProducts: v.number(),
+    }),
+    /** What the report could and could not establish, in plain sentences. */
+    dataQuality: v.array(
+      v.object({
+        state: v.union(
+          v.literal("ok"),
+          v.literal("warn"),
+          v.literal("absent"),
+          v.literal("bad"),
+        ),
+        title: v.string(),
+        detail: v.string(),
+      }),
+    ),
     errorMessage: v.union(v.string(), v.null()),
   })
-    .index("by_status", ["status"])
-    .index("by_uploadedAt", ["uploadedAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_status", ["status"]),
 
   /**
-   * One marketplace sheet's result within an upload.
+   * One marketplace's standing within a snapshot.
    *
-   * An upload is a session, not a sheet: the workbook holds a `Master` mapping
-   * table plus six marketplace sheets, and asking somebody to upload the same
-   * ten-megabyte file once per marketplace was never the right shape.
-   *
-   * Each sheet records its own period, because they genuinely differ — Blinkit
-   * runs June to August and Bigbasket to September in the same file. Collapsing
-   * them into one range would query the ERP for a window neither sheet covers.
-   *
-   * A sheet that failed to parse is stored as `failed` with its reason rather
-   * than dropped. One bad sheet must not take the other five with it, and a
-   * sheet that silently vanished is indistinguishable from one the workbook
-   * never had.
+   * Held apart from the rows because a marketplace has facts of its own — its
+   * period, whether its ERP side was configured, whether its sheet parsed at
+   * all — and a failed sheet has no rows to carry them on.
    */
-  importSheets: defineTable({
-    importId: v.id("imports"),
+  snapshotMarketplaces: defineTable({
+    snapshotId: v.id("reportSnapshots"),
     marketplace: v.string(),
     sheetName: v.string(),
     status: v.union(v.literal("completed"), v.literal("failed")),
-    minDate: v.union(v.string(), v.null()),
-    maxDate: v.union(v.string(), v.null()),
-    totalRows: v.number(),
-    validRows: v.number(),
-    invalidRows: v.number(),
-    /** How many rows reached an EAN, and by which route. */
-    identifiersFromSheet: v.number(),
-    identifiersFromMaster: v.number(),
-    identifiersUnresolved: v.number(),
-    /** Set only when `status` is `failed`. Never contains a credential. */
     errorMessage: v.union(v.string(), v.null()),
-    processedAt: v.number(),
+    periodStart: v.union(v.string(), v.null()),
+    periodEnd: v.union(v.string(), v.null()),
+    months: v.array(v.string()),
+    sourceRows: v.number(),
+    products: v.number(),
+    salesQuantity: v.number(),
+    salesValue: v.number(),
+    /** `reconciled` | `notConfigured` | `unavailable`. */
+    erpState: v.string(),
+    erpMessage: v.union(v.string(), v.null()),
+    grnState: v.string(),
+    grnMessage: v.union(v.string(), v.null()),
+    mappedProducts: v.number(),
+    unresolvedProducts: v.number(),
   })
-    .index("by_importId", ["importId"])
-    .index("by_importId_marketplace", ["importId", "marketplace"]),
+    .index("by_snapshotId", ["snapshotId"])
+    .index("by_snapshotId_marketplace", ["snapshotId", "marketplace"]),
 
   /**
-   * Normalized marketplace lines.
+   * The report itself: one row per marketplace, product and month.
    *
-   * Every field but `importId` and `sourceRow` is nullable: real exports omit
-   * them, and a schema that demanded a barcode would reject files that
-   * reconcile perfectly by SKU. `sourceRow` points back at the spreadsheet so a
-   * human can be shown the row that failed.
+   * `currentSoh` and `grn` are nullable and that nullability is the point. Null
+   * means the figure does not exist — no live position for this product, or no
+   * customer GRN raised — and renders as an em dash. Zero would claim the
+   * opposite: that the register was read and genuinely held nothing.
+   *
+   * `damage` and `returned` are carried at zero. They are columns the business
+   * asked for and no source feeds them yet; keeping them in the row model means
+   * connecting a real source later changes a writer, not the schema.
    */
-  excelRows: defineTable({
-    importId: v.id("imports"),
-    /**
-     * Which marketplace this row came from.
-     *
-     * One upload now covers every marketplace sheet in the workbook, so the
-     * import alone no longer says where a row came from — and a row that loses
-     * its marketplace is a row that can be summed into the wrong total. Optional
-     * only because rows written before multi-sheet imports existed have no
-     * answer; every new row carries one.
-     */
-    marketplace: v.optional(v.string()),
-    sheetName: v.optional(v.string()),
-    sourceRow: v.number(),
-    /** `YYYY-MM-DD`, UTC. The axis the reporting period is derived from. */
-    orderDate: v.union(v.string(), v.null()),
-    marketplaceOrderId: v.union(v.string(), v.null()),
+  snapshotRows: defineTable({
+    snapshotId: v.id("reportSnapshots"),
+    marketplace: v.string(),
+    /** `YYYY-MM`, from the marketplace report's own dates. */
+    month: v.string(),
+    productName: v.string(),
+    sku: v.string(),
+    ean: v.union(v.string(), v.null()),
     marketplaceItemId: v.union(v.string(), v.null()),
-    sku: v.union(v.string(), v.null()),
-    barcode: v.union(v.string(), v.null()),
-    productName: v.union(v.string(), v.null()),
-    quantity: v.union(v.number(), v.null()),
-    unitPrice: v.union(v.number(), v.null()),
-    grossSales: v.union(v.number(), v.null()),
-    /** Verbatim from the sheet, so a mapping decision can be audited. */
-    rawStatus: v.union(v.string(), v.null()),
-    normalizedStatus: v.union(
-      v.literal("delivered"),
-      v.literal("returned"),
-      v.literal("cancelled"),
-      v.literal("unknown"),
-    ),
+    erpItemId: v.union(v.string(), v.null()),
+    /** Live ERP position at the time the snapshot was built. Not historical. */
+    currentSoh: v.union(v.number(), v.null()),
+    /** From customer_grn. Null means no GRN was raised, not a recorded zero. */
+    grn: v.union(v.number(), v.null()),
+    salesQuantity: v.number(),
+    salesValue: v.number(),
+    damage: v.number(),
+    returned: v.number(),
+    /** `confirmed` | `matched` | `unresolved`. */
+    mappingStatus: v.string(),
+    mappingReason: v.string(),
+    /** How many spreadsheet rows this figure was aggregated from. */
+    sourceRows: v.number(),
   })
-    .index("by_importId", ["importId"])
-    // Rows are read per marketplace, because the report treats each as its own
-    // dataset with its own period and its own ERP counterpart.
-    .index("by_importId_marketplace", ["importId", "marketplace"])
-    // Compound rather than bare: every read of a row is scoped to its import,
-    // so a lone `orderDate` index would scan across every file ever uploaded.
-    .index("by_importId_orderDate", ["importId", "orderDate"])
-    .index("by_importId_sku", ["importId", "sku"])
-    .index("by_importId_marketplaceOrderId", ["importId", "marketplaceOrderId"])
-    .index("by_importId_marketplaceItemId", ["importId", "marketplaceItemId"])
-    // Cross-import lookups, for "where else has this SKU appeared".
-    .index("by_sku", ["sku"])
-    .index("by_orderDate", ["orderDate"]),
+    .index("by_snapshotId", ["snapshotId"])
+    .index("by_snapshotId_marketplace", ["snapshotId", "marketplace"]),
 
   /**
    * Which customer GSTINs belong to which marketplace.
@@ -219,42 +221,4 @@ export default defineSchema({
     .index("by_marketplace", ["marketplace"])
     .index("by_marketplace_ean", ["marketplace", "ean"])
     .index("by_marketplace_itemId", ["marketplace", "marketplaceItemId"]),
-
-  /**
-   * The outcome of matching one spreadsheet line to one ERP sales-order line.
-   *
-   * `salesOrderId` / `salesOrderItemId` are ERP ids held as plain strings, not
-   * Convex references — the ERP owns those records and this table only points
-   * at them. `matchType` records *how* the match was made (sku, barcode,
-   * channel mapping, manual) so a questionable reconciliation can be traced to
-   * the rule that produced it rather than argued about.
-   */
-  reconciliation: defineTable({
-    importId: v.id("imports"),
-    excelRowId: v.id("excelRows"),
-    salesOrderId: v.union(v.string(), v.null()),
-    salesOrderItemId: v.union(v.string(), v.null()),
-    matchType: v.union(
-      v.literal("sku"),
-      v.literal("barcode"),
-      v.literal("channelMapping"),
-      v.literal("customerIdentifier"),
-      v.literal("manual"),
-      v.literal("none"),
-    ),
-    status: v.union(
-      v.literal("matched"),
-      v.literal("unmatched"),
-      v.literal("ambiguous"),
-      v.literal("ignored"),
-    ),
-    /** Excel quantity minus ERP quantity. Positive means the sheet claims more. */
-    quantityDifference: v.union(v.number(), v.null()),
-    amountDifference: v.union(v.number(), v.null()),
-    createdAt: v.number(),
-  })
-    .index("by_importId", ["importId"])
-    .index("by_importId_status", ["importId", "status"])
-    .index("by_excelRowId", ["excelRowId"])
-    .index("by_salesOrderId", ["salesOrderId"]),
 });

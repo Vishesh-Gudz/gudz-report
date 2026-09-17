@@ -38,6 +38,27 @@ export const offsetPaginationSchema = z
 export type CursorPagination = z.infer<typeof cursorPaginationSchema>;
 export type OffsetPagination = z.infer<typeof offsetPaginationSchema>;
 
+/**
+ * Either pagination shape, because the ERP genuinely uses both.
+ *
+ * The SOH endpoints page by cursor; the older resource modules — customer GRN
+ * among them — page by offset. A contract that insisted on cursors rejected a
+ * perfectly valid response, which is how the GRN read came back as "ERP
+ * unavailable" when the register was simply empty.
+ */
+export const paginationSchema = z.union([
+  cursorPaginationSchema,
+  offsetPaginationSchema,
+]);
+export type ErpPagination = CursorPagination | OffsetPagination;
+
+/** Narrows to the cursor shape, for the walkers that follow one. */
+export function isCursorPagination(
+  pagination: ErpPagination | undefined,
+): pagination is CursorPagination {
+  return pagination !== undefined && "hasMore" in pagination;
+}
+
 /** The reporting window the ERP echoes back, so a caller can confirm what it asked for. */
 export const periodSchema = z
   .object({
@@ -93,7 +114,7 @@ export function erpSuccessSchema<T extends z.ZodType>(data: T) {
       meta: z
         .object({
           requestId: z.string(),
-          pagination: cursorPaginationSchema.optional(),
+          pagination: paginationSchema.optional(),
           period: periodSchema.optional(),
           summary: salesOrderSummarySchema.optional(),
         })

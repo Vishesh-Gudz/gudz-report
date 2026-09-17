@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { catalogItemSchema, type CatalogItem } from "../../types/erp";
+import { isCursorPagination } from "../../types/erp";
 import type { ErpClient } from "./client";
 
 /**
@@ -67,8 +68,14 @@ export async function getCatalog(
 
   return {
     items: response.data,
-    nextCursor: response.pagination?.nextCursor ?? null,
-    hasMore: response.pagination?.hasMore ?? false,
+    // These endpoints page by cursor; the narrowing keeps the shared response
+    // type honest now that the ERP's offset-paged modules use it too.
+    nextCursor: isCursorPagination(response.pagination)
+      ? response.pagination.nextCursor
+      : null,
+    hasMore: isCursorPagination(response.pagination)
+      ? response.pagination.hasMore
+      : false,
     requestId: response.requestId,
   };
 }

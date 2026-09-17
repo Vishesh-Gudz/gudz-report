@@ -3,26 +3,28 @@
 import { useEffect } from "react";
 import { X } from "lucide-react";
 
-import type { SohProductRow } from "@/lib/report/soh-rows";
+import type { SnapshotRow } from "@/lib/report/snapshot-model";
+import { monthLabel } from "./soh-table";
 import {
-  SELL_IN,
-  SELL_OUT,
-  SKU_STATUS_HINTS,
-  SKU_STATUS_LABELS,
-  STOCK_ON_HAND,
+  CURRENT_SOH,
+  DAMAGE,
+  GRN,
+  MAPPING_LABELS,
+  RETURNED,
+  SALES_QUANTITY,
 } from "@/lib/report/vocabulary";
 
 /**
- * One product, and where every number on its row came from.
+ * One product on one marketplace, month by month.
  *
- * The question this panel exists to answer is "can I quote this?", so it is
- * organised by provenance rather than by prettiness: the identifiers that tie
- * the two sides together, then each measure with its source named, then the
- * actual sales orders and spreadsheet rows underneath the totals.
+ * Opening a row shows every month for that product rather than only the month
+ * clicked — the question behind a click is almost always "how did this move
+ * across the period", and answering it with one month means closing the panel
+ * and opening two more.
  *
- * A panel rather than a page. The comparison a reader is making is against the
- * rows still visible behind it, and a navigation would take those away and make
- * them scroll back to their place afterwards.
+ * Current SOH sits apart from the months on purpose. It is a live figure that
+ * belongs to the product, not to any month in the table, and putting it in the
+ * monthly list would invite it to be read as month-end stock.
  */
 
 const inr = new Intl.NumberFormat("en-IN", {
@@ -31,32 +33,13 @@ const inr = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 0,
 });
 const num = new Intl.NumberFormat("en-IN");
-const pct = new Intl.NumberFormat("en-IN", {
-  style: "percent",
-  maximumFractionDigits: 1,
-  signDisplay: "exceptZero",
-});
 
-function Delta({ value, money }: { value: number | null; money?: boolean }) {
+function Figure({ value }: { value: number | null }) {
   if (value === null) return <span className="text-zinc-400">—</span>;
-  if (value === 0) return <span className="text-zinc-400">0</span>;
-  return (
-    <span className={value > 0 ? "text-amber-700" : "text-sky-700"}>
-      {value > 0 ? "+" : "−"}
-      {money ? inr.format(Math.abs(value)) : num.format(Math.abs(value))}
-    </span>
-  );
+  return <>{num.format(value)}</>;
 }
 
-function Row({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: React.ReactNode;
-  hint?: string;
-}) {
+function Row({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-zinc-100 py-1.5 last:border-0">
       <dt className="text-[13px] text-zinc-500">
@@ -78,25 +61,28 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="px-5 py-4">
+    <section className="border-t border-zinc-100 px-5 py-4 first:border-t-0">
       <h3 className="text-[11px] font-semibold tracking-wide text-zinc-500 uppercase">
         {title}
       </h3>
       {source ? <p className="mt-0.5 text-[11px] text-zinc-400">{source}</p> : null}
-      <dl className="mt-2">{children}</dl>
+      <div className="mt-2">{children}</div>
     </section>
   );
 }
 
 export function ProductDrawer({
   row,
+  siblings,
   onClose,
 }: {
-  row: SohProductRow | null;
+  row: SnapshotRow | null;
+  /** Every month of the same product on the same marketplace. */
+  siblings: SnapshotRow[];
   onClose: () => void;
 }) {
-  // Escape closes it. A panel that can only be dismissed with the mouse is a
-  // panel that traps somebody working through a list with the keyboard.
+  // Escape closes it. A panel dismissible only by mouse traps anyone working
+  // through the list with the keyboard.
   useEffect(() => {
     if (!row) return;
     const onKey = (event: KeyboardEvent) => {
@@ -107,6 +93,10 @@ export function ProductDrawer({
   }, [row, onClose]);
 
   if (!row) return null;
+
+  const months = [...siblings].sort((a, b) => a.month.localeCompare(b.month));
+  const totalSales = months.reduce((total, entry) => total + entry.salesQuantity, 0);
+  const totalValue = months.reduce((total, entry) => total + entry.salesValue, 0);
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
@@ -124,6 +114,9 @@ export function ProductDrawer({
               {row.productName}
             </h2>
             <p className="mt-1 font-mono text-[11px] break-all text-zinc-500">{row.sku}</p>
+            {row.ean ? (
+              <p className="font-mono text-[11px] text-zinc-500">{row.ean}</p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -135,209 +128,106 @@ export function ProductDrawer({
           </button>
         </header>
 
-        <Section title="Identity">
-          <Row label="EAN" value={row.ean ?? "—"} />
-          <Row label="Marketplace" value={<span className="capitalize">{row.marketplace}</span>} />
-          <Row label="Marketplace item ID" value={row.marketplaceItemId ?? "—"} />
-          <Row label="ERP item ID" value={
-            row.erpItemId ? (
-              <span className="font-mono text-[11px] break-all">{row.erpItemId}</span>
-            ) : (
-              "—"
-            )
-          } />
-          <Row
-            label="Reporting period"
-            value={
-              row.periodFrom && row.periodTo
-                ? `${row.periodFrom} → ${row.periodTo}`
-                : "—"
-            }
-            hint="this marketplace's own window"
-          />
-        </Section>
-
-        <div className="h-px bg-zinc-100" />
-
-        <Section title={STOCK_ON_HAND.label} source={STOCK_ON_HAND.source}>
-          {row.stockAvailable === null ? (
-            <p className="py-1.5 text-[13px] text-zinc-500">
-              No live stock position is held for this product in the ERP.
-            </p>
-          ) : (
-            <>
-              <Row label="Available" value={num.format(row.stockAvailable)} hint="after blocked stock" />
-              <Row label="On hand" value={num.format(row.stockOnHand ?? 0)} />
-              <Row label="Blocked" value={num.format(row.stockBlocked ?? 0)} hint="open orders and picklists" />
-              {row.stockLocations.map((location) => (
-                <Row
-                  key={location.name}
-                  label={location.name}
-                  value={`${num.format(location.available)} available`}
-                />
+        <Section title="By month" source={`${GRN.source} · ${SALES_QUANTITY.source}`}>
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="text-left text-[11px] text-zinc-400">
+                <th className="pb-1 font-medium">Month</th>
+                <th className="pb-1 text-right font-medium">{GRN.label}</th>
+                <th className="pb-1 text-right font-medium">{SALES_QUANTITY.label}</th>
+                <th className="pb-1 text-right font-medium">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {months.map((entry) => (
+                <tr
+                  key={entry.id}
+                  className={`border-t border-zinc-100 ${
+                    entry.id === row.id ? "font-medium text-zinc-900" : "text-zinc-700"
+                  }`}
+                >
+                  <td className="py-1.5">{monthLabel(entry.month)}</td>
+                  <td className="py-1.5 text-right">
+                    <Figure value={entry.grn} />
+                  </td>
+                  <td className="py-1.5 text-right">{num.format(entry.salesQuantity)}</td>
+                  <td className="py-1.5 text-right">{inr.format(entry.salesValue)}</td>
+                </tr>
               ))}
-              {row.stockUpdatedAt ? (
-                <Row
-                  label="Position read"
-                  value={new Date(row.stockUpdatedAt).toLocaleString("en-GB", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                />
-              ) : null}
-              <p className="mt-2 text-[11px] text-zinc-400">
-                Live position today, not the stock held at the end of the reporting
-                period.
-              </p>
-            </>
-          )}
-        </Section>
-
-        <div className="h-px bg-zinc-100" />
-
-        <Section title="Quantity" source={`${SELL_IN.source} · ${SELL_OUT.source}`}>
-          <Row
-            label={SELL_IN.label}
-            value={
-              row.sellIn === null ? (
-                <span className="text-zinc-400">not configured</span>
-              ) : (
-                num.format(row.sellIn)
-              )
-            }
-            hint="invoiced to the marketplace"
-          />
-          <Row label={SELL_OUT.label} value={num.format(row.sellOut)} hint="sold to consumers" />
-          <Row label="Variance" value={<Delta value={row.quantityVariance} />} hint="sell-out minus sell-in" />
-          <Row
-            label="Variance %"
-            value={
-              row.quantityVariancePct === null ? (
-                <span className="text-zinc-400">—</span>
-              ) : (
-                <span className={row.quantityVariancePct > 0 ? "text-amber-700" : "text-sky-700"}>
-                  {pct.format(row.quantityVariancePct)}
-                </span>
-              )
-            }
-          />
-        </Section>
-
-        <div className="h-px bg-zinc-100" />
-
-        <Section title="Value">
-          <Row
-            label={`${SELL_IN.label} revenue`}
-            value={
-              row.sellInRevenue === null ? (
-                <span className="text-zinc-400">not configured</span>
-              ) : (
-                inr.format(row.sellInRevenue)
-              )
-            }
-          />
-          <Row label={`${SELL_OUT.label} revenue`} value={inr.format(row.sellOutRevenue)} />
-          <Row label="Variance" value={<Delta value={row.revenueVariance} money />} />
-        </Section>
-
-        <div className="h-px bg-zinc-100" />
-
-        <Section title="Status and mapping">
-          <Row label="Status" value={SKU_STATUS_LABELS[row.status]} />
-          <p className="py-1.5 text-[12px] text-zinc-500">{SKU_STATUS_HINTS[row.status]}</p>
-          {row.erpState !== "reconciled" ? (
-            <p className="py-1.5 text-[12px] text-amber-700">
-              {row.erpState === "notConfigured"
-                ? "ERP reconciliation is not configured for this marketplace, so no sell-in figure exists to compare against."
-                : "The ERP could not be read for this marketplace, so sell-in is missing rather than zero."}
-            </p>
+            </tbody>
+            {months.length > 1 ? (
+              <tfoot>
+                <tr className="border-t border-zinc-300 font-medium text-zinc-900">
+                  <td className="py-1.5">Total</td>
+                  <td className="py-1.5 text-right">
+                    <Figure
+                      value={
+                        months.some((entry) => entry.grn !== null)
+                          ? months.reduce((total, entry) => total + (entry.grn ?? 0), 0)
+                          : null
+                      }
+                    />
+                  </td>
+                  <td className="py-1.5 text-right">{num.format(totalSales)}</td>
+                  <td className="py-1.5 text-right">{inr.format(totalValue)}</td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+          {row.grn === null ? (
+            <p className="mt-2 text-[11px] text-zinc-500">{GRN.awaiting}.</p>
           ) : null}
-          <Row
-            label="Mapping"
-            value={
-              row.mapping === "confirmed"
-                ? "Confirmed by a person"
-                : row.mapping === "matched"
-                  ? "Matched on an identifier"
-                  : row.mapping === "unresolved"
-                    ? "Needs review"
-                    : "ERP product"
-            }
-          />
-          <p className="py-1.5 text-[12px] text-zinc-500">{row.mappingReason}</p>
         </Section>
 
-        {row.erpOrderRefs.length > 0 ? (
-          <>
-            <div className="h-px bg-zinc-100" />
-            <Section
-              title={`${SELL_IN.label} orders`}
-              source={`${num.format(row.erpOrders)} order${row.erpOrders === 1 ? "" : "s"} · ${num.format(row.erpLines)} line${row.erpLines === 1 ? "" : "s"}`}
-            >
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="text-left text-[11px] text-zinc-400">
-                    <th className="pb-1 font-medium">Order</th>
-                    <th className="pb-1 font-medium">Date</th>
-                    <th className="pb-1 text-right font-medium">Qty</th>
-                    <th className="pb-1 text-right font-medium">Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {row.erpOrderRefs.map((order) => (
-                    <tr key={order.salesOrderId} className="border-t border-zinc-100">
-                      <td className="py-1 font-mono text-[11px]">{order.soNumber}</td>
-                      <td className="py-1">{order.orderDate.slice(0, 10)}</td>
-                      <td className="py-1 text-right">{num.format(order.quantity)}</td>
-                      <td className="py-1 text-right">{inr.format(order.amount)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Section>
-          </>
-        ) : null}
+        <Section title={CURRENT_SOH.label} source={CURRENT_SOH.source}>
+          <dl>
+            <Row
+              label="Available now"
+              value={<Figure value={row.currentSoh} />}
+              hint="Healthy Master's own stock, not the marketplace's"
+            />
+          </dl>
+          <p className="mt-2 text-[11px] text-zinc-400">
+            {row.currentSoh === null
+              ? "No live stock position is held for this product in the ERP."
+              : "A live position, not the stock held at the end of any month above."}
+          </p>
+        </Section>
 
-        {row.sourceRows > 0 ? (
-          <>
-            <div className="h-px bg-zinc-100" />
-            <Section
-              title={`${SELL_OUT.label} source rows`}
-              source={`${num.format(row.sourceRows)} row${row.sourceRows === 1 ? "" : "s"} in the uploaded report`}
-            >
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="text-left text-[11px] text-zinc-400">
-                    <th className="pb-1 font-medium">Row</th>
-                    <th className="pb-1 font-medium">Date</th>
-                    <th className="pb-1 text-right font-medium">Qty</th>
-                    <th className="pb-1 text-right font-medium">Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {row.sourceRowRefs.map((source) => (
-                    <tr key={source.sourceRow} className="border-t border-zinc-100">
-                      <td className="py-1">{source.sourceRow}</td>
-                      <td className="py-1">{source.orderDate ?? "—"}</td>
-                      <td className="py-1 text-right">
-                        {source.quantity === null ? "—" : num.format(source.quantity)}
-                      </td>
-                      <td className="py-1 text-right">
-                        {source.amount === null ? "—" : inr.format(source.amount)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {row.sourceRows > row.sourceRowRefs.length ? (
-                <p className="mt-2 text-[11px] text-zinc-400">
-                  Showing the first {num.format(row.sourceRowRefs.length)} of{" "}
-                  {num.format(row.sourceRows)} rows. The totals above cover all of them.
-                </p>
-              ) : null}
-            </Section>
-          </>
-        ) : null}
+        <Section title="Adjustments">
+          <dl>
+            <Row label={DAMAGE.label} value={num.format(row.damage)} hint={DAMAGE.description} />
+            <Row
+              label={RETURNED.label}
+              value={num.format(row.returned)}
+              hint={RETURNED.description}
+            />
+          </dl>
+        </Section>
+
+        <Section title="Source">
+          <dl>
+            <Row label="Marketplace" value={<span className="capitalize">{row.marketplace}</span>} />
+            <Row label="Marketplace item ID" value={row.marketplaceItemId ?? "—"} />
+            <Row
+              label="ERP item"
+              value={
+                row.erpItemId ? (
+                  <span className="font-mono text-[11px] break-all">{row.erpItemId}</span>
+                ) : (
+                  "—"
+                )
+              }
+            />
+            <Row label="Mapping" value={MAPPING_LABELS[row.mappingStatus]} />
+            <Row
+              label="Report rows"
+              value={num.format(months.reduce((total, entry) => total + entry.sourceRows, 0))}
+              hint="lines aggregated from the uploaded report"
+            />
+          </dl>
+          <p className="mt-2 text-[12px] text-zinc-500">{row.mappingReason}</p>
+        </Section>
       </aside>
     </div>
   );

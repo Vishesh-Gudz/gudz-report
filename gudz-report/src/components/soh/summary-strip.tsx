@@ -1,17 +1,12 @@
-import type { SohTotals } from "@/lib/report/soh-rows";
-import { SELL_IN, SELL_OUT, STOCK_ON_HAND } from "@/lib/report/vocabulary";
+import type { ViewTotals } from "@/lib/report/snapshot-model";
+import { CURRENT_SOH, GRN, SALES_QUANTITY } from "@/lib/report/vocabulary";
 
 /**
- * The numbers somebody quotes from this report.
+ * The figures somebody quotes from this report.
  *
- * Sell-in and the variance are qualified rather than absolute: when only some
- * marketplaces have an ERP customer configured, a bare total would read as a
- * figure for the whole upload. The detail line says how many marketplaces
- * actually contributed one, so the number cannot be quoted out of context.
- *
- * Stock is summed per distinct ERP item, not per row — one product sold on three
- * marketplaces has one warehouse position, and adding it three times would
- * treble it.
+ * An em dash wherever a source holds nothing. GRN in particular reads as a dash
+ * until a customer goods receipt exists; a zero would claim one was raised and
+ * recorded nothing, which is a different and wrong statement.
  */
 
 const inr = new Intl.NumberFormat("en-IN", {
@@ -30,19 +25,14 @@ function Metric({
   label: string;
   value: string;
   detail?: string;
-  tone?: "warn" | "up" | "down";
+  tone?: "warn";
 }) {
-  const valueColour =
-    tone === "up" ? "text-amber-700" : tone === "down" ? "text-sky-700" : "text-zinc-900";
-
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-0.5 border-l border-zinc-200 px-5 py-4 first:border-l-0">
       <span className="text-[11px] font-medium tracking-wide text-zinc-500 uppercase">
         {label}
       </span>
-      <span className={`text-[22px] leading-tight font-semibold ${valueColour}`}>
-        {value}
-      </span>
+      <span className="text-[22px] leading-tight font-semibold text-zinc-900">{value}</span>
       {detail ? (
         <span
           className={`truncate text-[12px] ${tone === "warn" ? "text-amber-700" : "text-zinc-500"}`}
@@ -58,43 +48,29 @@ function Metric({
 export function SummaryStrip({
   totals,
   marketplaceCount,
+  monthCount,
 }: {
-  totals: SohTotals;
+  totals: ViewTotals;
   marketplaceCount: number;
+  monthCount: number;
 }) {
-  const partiallyReconciled =
-    totals.reconciledMarketplaces > 0 &&
-    totals.reconciledMarketplaces < marketplaceCount;
-
-  const sellInDetail =
-    totals.reconciledMarketplaces === 0
-      ? "no marketplace configured"
-      : partiallyReconciled
-        ? `${totals.reconciledMarketplaces} of ${marketplaceCount} marketplaces · ${inr.format(totals.sellInRevenue)}`
-        : inr.format(totals.sellInRevenue);
-
   return (
     <section className="flex flex-wrap border border-zinc-200 bg-white">
       <Metric
         label="Marketplaces"
         value={num.format(marketplaceCount)}
-        detail={
-          totals.reconciledMarketplaces === marketplaceCount
-            ? "all reconciled"
-            : `${totals.reconciledMarketplaces} reconciled`
-        }
-        tone={partiallyReconciled || totals.reconciledMarketplaces === 0 ? "warn" : undefined}
+        detail={`${num.format(monthCount)} month${monthCount === 1 ? "" : "s"}`}
       />
       <Metric
         label="Products"
         value={num.format(totals.products)}
-        detail="one record per marketplace"
+        detail={`${num.format(totals.rows)} product-months`}
       />
       <Metric
         label="Mapped"
         value={
-          totals.mappedProducts + totals.unresolvedProducts > 0
-            ? `${totals.mappedProducts} / ${totals.mappedProducts + totals.unresolvedProducts}`
+          totals.products > 0
+            ? `${totals.products - totals.unresolvedProducts} / ${totals.products}`
             : "—"
         }
         detail={
@@ -105,49 +81,21 @@ export function SummaryStrip({
         tone={totals.unresolvedProducts > 0 ? "warn" : undefined}
       />
       <Metric
-        label={STOCK_ON_HAND.label}
-        value={totals.stockProducts > 0 ? num.format(totals.stockAvailable) : "—"}
-        detail={
-          totals.stockProducts > 0
-            ? `available now · ${num.format(totals.stockProducts)} products`
-            : "live position unavailable"
-        }
-        tone={totals.stockProducts > 0 ? undefined : "warn"}
+        label={CURRENT_SOH.label}
+        value={totals.currentSoh === null ? "—" : num.format(totals.currentSoh)}
+        detail={totals.currentSoh === null ? "live position unavailable" : "available now"}
+        tone={totals.currentSoh === null ? "warn" : undefined}
       />
       <Metric
-        label={SELL_IN.label}
-        value={totals.reconciledMarketplaces > 0 ? num.format(totals.sellIn) : "—"}
-        detail={sellInDetail}
-        tone={totals.reconciledMarketplaces === 0 ? "warn" : undefined}
+        label={GRN.label}
+        value={totals.grn === null ? "—" : num.format(totals.grn)}
+        detail={totals.grn === null ? GRN.awaiting : "received by the customer"}
+        tone={totals.grn === null ? "warn" : undefined}
       />
       <Metric
-        label={SELL_OUT.label}
-        value={num.format(totals.sellOut)}
-        detail={inr.format(totals.sellOutRevenue)}
-      />
-      <Metric
-        label="Variance"
-        value={
-          totals.reconciledMarketplaces > 0
-            ? `${totals.quantityVariance > 0 ? "+" : totals.quantityVariance < 0 ? "−" : ""}${num.format(Math.abs(totals.quantityVariance))}`
-            : "—"
-        }
-        detail={
-          totals.reconciledMarketplaces === 0
-            ? "needs a configured marketplace"
-            : partiallyReconciled
-              ? "reconciled marketplaces only"
-              : "sell-out minus sell-in"
-        }
-        tone={
-          totals.reconciledMarketplaces === 0
-            ? "warn"
-            : totals.quantityVariance > 0
-              ? "up"
-              : totals.quantityVariance < 0
-                ? "down"
-                : undefined
-        }
+        label={SALES_QUANTITY.label}
+        value={num.format(totals.salesQuantity)}
+        detail={inr.format(totals.salesValue)}
       />
     </section>
   );

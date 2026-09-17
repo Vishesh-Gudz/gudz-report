@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "SOH Report · Healthy Master",
   description:
-    "Stock on hand, sell-in and sell-out per product, reconciled between the ERP and a marketplace report.",
+    "Current stock, goods received and sales quantity per product and month, from the ERP and an uploaded marketplace report.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

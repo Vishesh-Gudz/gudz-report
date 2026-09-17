@@ -1,19 +1,15 @@
 import { AlertTriangle } from "lucide-react";
 
-import type { MarketplaceSection } from "@/lib/report/soh-report";
+import type { SnapshotMarketplace } from "@/lib/report/snapshot-model";
+import { GRN_STATE_LABELS, SALES_QUANTITY } from "@/lib/report/vocabulary";
 
 /**
- * One line per marketplace: what was read, and whether it could be reconciled.
+ * One line per marketplace: what was read, and how far the ERP reached.
  *
- * Shown whenever an upload covers more than one marketplace, because the
- * headline totals hide the thing a reader most needs to know — that sell-in
- * exists for some marketplaces and not others. A single "sell-out 214,000"
- * without this table invites the assumption that every channel was measured the
- * same way.
- *
- * A marketplace with no ERP customer configured shows a dash for sell-in rather
- * than a zero, and says so in its status. A marketplace whose sheet failed keeps
- * its row and carries the reason.
+ * Shown whenever a report covers more than one marketplace, because the
+ * headline totals hide the thing a reader most needs — that GRN exists for some
+ * marketplaces and not others. Each keeps its own reporting period; they
+ * genuinely differ inside one workbook.
  */
 
 const inr = new Intl.NumberFormat("en-IN", {
@@ -23,59 +19,33 @@ const inr = new Intl.NumberFormat("en-IN", {
 });
 const num = new Intl.NumberFormat("en-IN");
 
-const ERP_LABELS: Record<MarketplaceSection["erpState"], string> = {
-  reconciled: "Reconciled",
-  notConfigured: "ERP not configured",
-  unavailable: "ERP unavailable",
-};
-
-const ERP_STYLES: Record<MarketplaceSection["erpState"], string> = {
-  reconciled: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  notConfigured: "border-zinc-200 bg-zinc-50 text-zinc-600",
+const GRN_STYLES: Record<string, string> = {
+  available: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  awaiting: "border-zinc-200 bg-zinc-50 text-zinc-600",
+  notConfigured: "border-zinc-200 bg-zinc-50 text-zinc-500",
   unavailable: "border-amber-200 bg-amber-50 text-amber-800",
 };
 
-export function MarketplaceSummary({
-  sections,
-}: {
-  sections: MarketplaceSection[];
-}) {
+export function MarketplaceSummary({ sections }: { sections: SnapshotMarketplace[] }) {
   if (sections.length <= 1) return null;
 
   return (
     <section className="border border-zinc-200 bg-white">
       <header className="flex items-baseline justify-between gap-3 border-b border-zinc-200 px-5 py-3">
         <h2 className="text-[13px] font-semibold text-zinc-900">By marketplace</h2>
-        <p className="text-[12px] text-zinc-500">
-          Each sheet has its own reporting period and its own ERP status
-        </p>
+        <p className="text-[12px] text-zinc-500">Each report keeps its own period</p>
       </header>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[54rem] text-[13px]">
+        <table className="w-full min-w-[52rem] text-[13px]">
           <thead>
-            <tr className="border-b border-zinc-200 text-zinc-500">
-              <th className="px-5 py-2 text-left text-[11px] font-medium tracking-wide uppercase">
-                Marketplace
-              </th>
-              <th className="px-3 py-2 text-left text-[11px] font-medium tracking-wide uppercase">
-                Period
-              </th>
-              <th className="px-3 py-2 text-right text-[11px] font-medium tracking-wide uppercase">
-                Products
-              </th>
-              <th className="px-3 py-2 text-right text-[11px] font-medium tracking-wide uppercase">
-                Sell-in
-              </th>
-              <th className="px-3 py-2 text-right text-[11px] font-medium tracking-wide uppercase">
-                Sell-out
-              </th>
-              <th className="px-3 py-2 text-right text-[11px] font-medium tracking-wide uppercase">
-                Sell-out value
-              </th>
-              <th className="px-5 py-2 text-left text-[11px] font-medium tracking-wide uppercase">
-                Status
-              </th>
+            <tr className="border-b border-zinc-200 text-[11px] tracking-wide text-zinc-500 uppercase">
+              <th className="px-5 py-2 text-left font-medium">Marketplace</th>
+              <th className="px-3 py-2 text-left font-medium">Period</th>
+              <th className="px-3 py-2 text-right font-medium">Products</th>
+              <th className="px-3 py-2 text-right font-medium">{SALES_QUANTITY.label}</th>
+              <th className="px-3 py-2 text-right font-medium">Value</th>
+              <th className="px-5 py-2 text-left font-medium">GRN status</th>
             </tr>
           </thead>
           <tbody>
@@ -85,47 +55,42 @@ export function MarketplaceSummary({
                   {section.marketplace}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap text-zinc-600">
-                  {section.period
-                    ? `${section.period.fromDay} → ${section.period.toDay}`
+                  {section.periodStart && section.periodEnd
+                    ? `${section.periodStart} → ${section.periodEnd}`
                     : "—"}
                 </td>
                 <td className="px-3 py-2 text-right text-zinc-700">
-                  {section.status === "failed" ? "—" : num.format(section.rows.length)}
+                  {section.status === "failed" ? "—" : num.format(section.products)}
                 </td>
                 <td className="px-3 py-2 text-right text-zinc-700">
-                  {section.erpState === "reconciled"
-                    ? num.format(section.sellInQuantity)
-                    : "—"}
+                  {section.status === "failed" ? "—" : num.format(section.salesQuantity)}
                 </td>
                 <td className="px-3 py-2 text-right text-zinc-700">
-                  {section.status === "failed"
-                    ? "—"
-                    : num.format(section.sellOutQuantity)}
-                </td>
-                <td className="px-3 py-2 text-right text-zinc-700">
-                  {section.status === "failed"
-                    ? "—"
-                    : inr.format(section.sellOutRevenue)}
+                  {section.status === "failed" ? "—" : inr.format(section.salesValue)}
                 </td>
                 <td className="px-5 py-2">
                   {section.status === "failed" ? (
-                    <span className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700">
-                      <AlertTriangle className="h-3 w-3" aria-hidden />
-                      Import failed
-                    </span>
+                    <>
+                      <span className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700">
+                        <AlertTriangle className="h-3 w-3" aria-hidden />
+                        Unable to process
+                      </span>
+                      {section.errorMessage ? (
+                        <p className="mt-1 max-w-[22rem] text-[11px] text-red-700">
+                          {section.errorMessage}
+                        </p>
+                      ) : null}
+                    </>
                   ) : (
                     <span
-                      title={section.erpMessage ?? undefined}
-                      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${ERP_STYLES[section.erpState]}`}
+                      title={section.grnMessage ?? undefined}
+                      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${
+                        GRN_STYLES[section.grnState] ?? GRN_STYLES.notConfigured
+                      }`}
                     >
-                      {ERP_LABELS[section.erpState]}
+                      {GRN_STATE_LABELS[section.grnState] ?? section.grnState}
                     </span>
                   )}
-                  {section.status === "failed" && section.error ? (
-                    <p className="mt-1 max-w-[22rem] text-[11px] text-red-700">
-                      {section.error}
-                    </p>
-                  ) : null}
                 </td>
               </tr>
             ))}

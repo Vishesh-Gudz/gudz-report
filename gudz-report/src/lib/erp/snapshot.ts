@@ -6,6 +6,7 @@ import {
   type LedgerHealth,
   type SnapshotRow,
 } from "../../types/erp";
+import { isCursorPagination } from "../../types/erp";
 import type { ErpClient } from "./client";
 
 /**
@@ -72,8 +73,12 @@ export async function getSnapshot(
 
   return {
     rows: response.data,
-    nextCursor: response.pagination?.nextCursor ?? null,
-    hasMore: response.pagination?.hasMore ?? false,
+    nextCursor: isCursorPagination(response.pagination)
+      ? response.pagination.nextCursor
+      : null,
+    hasMore: isCursorPagination(response.pagination)
+      ? response.pagination.hasMore
+      : false,
     requestId: response.requestId,
   };
 }

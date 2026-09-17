@@ -1,7 +1,11 @@
 import { z } from "zod";
 
-import { erpErrorSchema, erpSuccessSchema } from "../../types/erp";
-import type { CursorPagination, Period, SalesOrderSummary } from "../../types/erp";
+import {
+  erpErrorSchema,
+  erpSuccessSchema,
+  isCursorPagination,
+} from "../../types/erp";
+import type { ErpPagination, Period, SalesOrderSummary } from "../../types/erp";
 
 /**
  * HTTP client for the delivery-erp `/api/v1` surface.
@@ -87,7 +91,7 @@ export class ErpContractError extends Error {
 export interface ErpResponse<T> {
   readonly data: T;
   readonly requestId: string;
-  readonly pagination?: CursorPagination;
+  readonly pagination?: ErpPagination;
   readonly period?: Period;
   readonly summary?: SalesOrderSummary;
 }
@@ -254,7 +258,9 @@ export function createErpClient(config: ErpClientConfig) {
       summary ??= page.summary;
 
       const next = page.pagination;
-      if (!next || !next.hasMore || !next.nextCursor) break;
+      // Only a cursor-paged endpoint can be walked this way; an offset-paged
+      // one has no cursor to follow and ends after its first page here.
+      if (!isCursorPagination(next) || !next.hasMore || !next.nextCursor) break;
 
       if (pages >= maxPages) {
         throw new ErpApiError({

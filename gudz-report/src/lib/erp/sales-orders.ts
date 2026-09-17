@@ -13,6 +13,7 @@ import {
   type SalesOrderSummary,
   type Period,
 } from "../../types/erp";
+import { isCursorPagination } from "../../types/erp";
 import type { ErpClient } from "./client";
 
 /**
@@ -105,8 +106,14 @@ export async function getSalesOrders(
 
   return {
     orders: response.data,
-    nextCursor: response.pagination?.nextCursor ?? null,
-    hasMore: response.pagination?.hasMore ?? false,
+    // These endpoints page by cursor; the narrowing keeps the shared response
+    // type honest now that the ERP's offset-paged modules use it too.
+    nextCursor: isCursorPagination(response.pagination)
+      ? response.pagination.nextCursor
+      : null,
+    hasMore: isCursorPagination(response.pagination)
+      ? response.pagination.hasMore
+      : false,
     period: response.period,
     summary: response.summary,
     requestId: response.requestId,
@@ -172,8 +179,14 @@ export async function getSalesOrderLines(
 
   return {
     lines: response.data,
-    nextCursor: response.pagination?.nextCursor ?? null,
-    hasMore: response.pagination?.hasMore ?? false,
+    // These endpoints page by cursor; the narrowing keeps the shared response
+    // type honest now that the ERP's offset-paged modules use it too.
+    nextCursor: isCursorPagination(response.pagination)
+      ? response.pagination.nextCursor
+      : null,
+    hasMore: isCursorPagination(response.pagination)
+      ? response.pagination.hasMore
+      : false,
     period: response.period,
     summary: response.summary,
     requestId: response.requestId,

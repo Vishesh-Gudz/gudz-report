@@ -4,7 +4,26 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Loader2, Search, Trash2, X } from "lucide-react";
 
-import type { UnresolvedProduct } from "@/lib/report/soh-report";
+/**
+ * A marketplace product that reached no ERP item.
+ *
+ * Declared here rather than imported from the report layer: this screen now
+ * reads its list from the saved snapshot, and the shape it needs is its own.
+ */
+export interface UnresolvedProduct {
+  readonly sourceRow: number;
+  readonly orderDate: string | null;
+  readonly productName: string | null;
+  readonly marketplaceItemId: string | null;
+  readonly ean: string | null;
+  readonly sku: string | null;
+  readonly quantity: number | null;
+  readonly amount: number | null;
+  readonly rowCount: number;
+  readonly status: "ambiguous" | "unmapped";
+  readonly reason: string;
+  readonly candidates: ReadonlyArray<{ itemId: string; sku: string; name: string }>;
+}
 
 /**
  * Resolving products a person has to decide on.
