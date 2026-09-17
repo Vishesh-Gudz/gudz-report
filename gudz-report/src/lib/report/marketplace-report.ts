@@ -26,6 +26,11 @@ import {
   reconcileBySku,
   type SkuReconciliationResult,
 } from "./sku-reconciliation";
+import {
+  emptyStockSnapshot,
+  fetchStockPositions,
+  type StockSnapshot,
+} from "./stock";
 
 /**
  * The marketplace report, end to end.
@@ -121,6 +126,25 @@ export interface UnmappedReportRow {
   }>;
 }
 
+/**
+ * What the report can and cannot say about stock.
+ *
+ * Present because the honest answer is mixed, and a blank column invites the
+ * reader to assume the worst or, worse, to assume a zero. The current position
+ * is real ERP data; the historical view is not available at all.
+ */
+export interface StockAvailability {
+  readonly currentAvailable: boolean;
+  readonly currentError: string | null;
+  readonly productsWithPosition: number;
+  readonly productsRequested: number;
+  readonly totalOnHand: number;
+  readonly totalAvailable: number;
+  /** Always false in V1, and said out loud rather than left blank. */
+  readonly historyAvailable: false;
+  readonly historyReason: string;
+}
+
 export interface MarketplaceReport {
   readonly marketplace: string | null;
   readonly period: ReportingPeriod;
@@ -128,6 +152,8 @@ export interface MarketplaceReport {
   readonly erp: ErpSideSummary;
   readonly kpis: ReportKpis;
   readonly reconciliation: SkuReconciliationResult;
+  readonly stock: StockSnapshot;
+  readonly stockAvailability: StockAvailability;
   readonly unmappedRows: UnmappedReportRow[];
   readonly catalog: {
     readonly items: number;
@@ -436,6 +462,20 @@ export async function loadMarketplaceReport(
     erpLines,
   );
 
+  // Live stock for every product the report actually names. Fetched after the
+  // reconciliation because that is what decides which items are in scope.
+  const itemIds = reconciliation.rows
+    .map((row) => row.erpItemId)
+    .filter((id): id is string => id !== null);
+
+  let stock: StockSnapshot = emptyStockSnapshot();
+  if (erpAvailable && itemIds.length > 0) {
+    stock = await fetchStockPositions(getErpClient(), itemIds);
+    if (!stock.available && stock.error) {
+      warnings.push(`Could not read the current stock position: ${stock.error}`);
+    }
+  }
+
   const reportable = erpLines.filter((line) => isReportableStatus(line.status));
 
   const erp: ErpSideSummary = {
@@ -490,6 +530,18 @@ export async function loadMarketplaceReport(
       ambiguousRows: mappingResult?.statistics.ambiguous ?? 0,
     },
     reconciliation,
+    stock,
+    stockAvailability: {
+      currentAvailable: stock.available && stock.itemsFound > 0,
+      currentError: stock.error,
+      productsWithPosition: stock.itemsFound,
+      productsRequested: stock.itemsRequested,
+      totalOnHand: [...stock.byItemId.values()].reduce((t, p) => t + p.onHand, 0),
+      totalAvailable: [...stock.byItemId.values()].reduce((t, p) => t + p.available, 0),
+      historyAvailable: false,
+      historyReason:
+        "Opening and closing stock for a past period would have to be replayed from the ERP stock ledger, which has a known sync backlog. Rather than publish a figure that would look authoritative and be wrong, this report shows the live position only.",
+    },
     unmappedRows: buildUnmappedRows(mappedRows),
     catalog: catalogIndex
       ? { ...catalogIndex.counts, fromCache: catalogFromCache }

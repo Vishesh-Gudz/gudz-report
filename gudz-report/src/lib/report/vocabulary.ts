@@ -1,9 +1,16 @@
 /**
- * What the two sides of this report actually measure.
+ * What this report measures, and what it refuses to claim.
  *
- * The report was called an "SOH report", and that was wrong in a way that
- * matters. Stock on Hand is a position: how much exists, right now, in a
- * location. Nothing in this dashboard measures that. What it compares is:
+ * It is an SOH report, and one genuine stock figure is in it: the **live**
+ * position from the ERP's balance tables, per product and location. That is
+ * real, current, and labelled as current.
+ *
+ * What is deliberately absent is *historical* SOH — opening and closing stock
+ * for a past period. Deriving those means replaying the ERP stock ledger, and
+ * the production ledger has a known sync backlog, so the result would look
+ * authoritative and be wrong. The report says so on screen instead.
+ *
+ * Around that live position sit the two flow measures:
  *
  *   **Sell-in**  — what Healthy Master invoiced *to* the marketplace. B2B
  *                  sales orders in the ERP, by `orderedQuantity`.
@@ -17,17 +24,28 @@
  * sell-in is the marketplace drawing down stock it already holds, and sustained
  * sell-in above sell-out is stock accumulating there.
  *
- * Calling that "SOH" invited somebody to read a variance as a stock discrepancy
- * and go looking for missing inventory that was never missing. The labels live
- * here so the whole UI says the same thing, and so the next screen that needs
- * them does not invent a third name.
+ * The variance between them is a flow difference, not a stock count, and must
+ * never be presented as one: a reader who takes it for a discrepancy will go
+ * looking for inventory that was never missing. The labels live here so the
+ * whole UI says the same thing, and so the next screen that needs them does not
+ * invent a third name.
  *
  * Field names in the data layer stay source-shaped — `erpQuantity`,
  * `excelRevenue` — because they say where a number came from, which is a
  * separate and still-true fact. This module maps source to meaning.
  */
 
-export const REPORT_TITLE = "Sell-in vs Sell-out";
+export const REPORT_TITLE = "SOH Report";
+
+/**
+ * What the product is, in one line, under the title.
+ *
+ * The title is the client's name for this thing and stays. The subtitle carries
+ * the honesty: it says which stock figure is real and which is not, before
+ * anybody reads a number.
+ */
+export const REPORT_SUBTITLE =
+  "Live stock position, sell-in and sell-out per product";
 
 export const SELL_IN = {
   label: "Sell-in",
@@ -52,12 +70,21 @@ export const SELL_OUT = {
  * error, and a tooltip is exactly where that does not get read.
  */
 export const REPORT_EXPLANATION =
-  "This is not a stock-on-hand report. It compares sell-in — what Healthy Master " +
-  "invoiced to the marketplace — against sell-out, what the marketplace reports " +
-  "selling to consumers. The two measure different events at different times, so " +
-  "a gap is normal: sell-out above sell-in means the marketplace is drawing down " +
-  "stock it already holds, and sell-in above sell-out means stock is building up " +
-  "there. Treat a variance as a question, not as a discrepancy.";
+  "Sell-in is what Healthy Master invoiced to the marketplace. Sell-out is what " +
+  "the marketplace reports selling to consumers. They measure different events at " +
+  "different times, so a gap is normal rather than an error: sell-out above " +
+  "sell-in means the marketplace is drawing down stock it already holds, and " +
+  "sell-in above sell-out means stock is building up there. The stock column is " +
+  "the live position in Healthy Master's own warehouses today, not the " +
+  "marketplace's.";
+
+/** The live stock measure. Real, current, and never presented as historical. */
+export const STOCK_ON_HAND = {
+  label: "Stock on hand",
+  source: "ERP live balances",
+  description:
+    "Available stock in Healthy Master's own locations right now, after deducting what is blocked by open orders and picklists. This is a live position, not the stock held at the end of the reporting period.",
+} as const;
 
 /** Column and status wording, so the table and the tiles cannot drift apart. */
 export const SKU_STATUS_LABELS = {

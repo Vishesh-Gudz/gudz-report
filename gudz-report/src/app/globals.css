@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* The application is designed light: white surfaces, zinc borders, colour
+     reserved for variance direction. The generated template shipped a
+     prefers-color-scheme override that flipped the page background to near
+     black while every component stayed light, so an unstyled area — the upload
+     screen — rendered as white cards floating on black. Rather than ship a
+     half-built dark theme, this is light until one is actually designed. */
+  --background: #fafafa;
+  --foreground: #18181b;
 }
 
 @theme inline {
@@ -12,15 +18,27 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Geist, loaded in the layout. The generated template hard-coded Arial here,
+     which silently overrode it on every page. */
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  /* Tabular figures everywhere: this application is a table of numbers, and
+     proportional digits make columns of them impossible to scan. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Colour only where it carries meaning, so a selection reads as a selection
+   rather than as another status. */
+::selection {
+  background: #18181b;
+  color: #fafafa;
+}
+
+/* A dense table needs its header to survive scrolling. */
+.sticky-head th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }

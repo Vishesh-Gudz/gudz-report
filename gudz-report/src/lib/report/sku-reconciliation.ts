@@ -50,6 +50,23 @@ export interface SkuExcelRowRef {
 
 export interface SkuReconciliationRow {
   readonly sku: string;
+  /**
+   * The ERP item id behind this SKU, when one is known.
+   *
+   * Carried so the live stock position can be joined on it. The SKU is the
+   * grouping key because it is what both sides share, but stock is keyed on the
+   * item, and the ERP has more than one SKU record pointing at the same item.
+   */
+  readonly erpItemId: string | null;
+  /**
+   * The marketplace's identifiers for this product.
+   *
+   * Kept through the grouping because the report is read by people who have the
+   * marketplace's own screens open next to it, and the EAN is how they find the
+   * row. Null when only the ERP side contributed.
+   */
+  readonly ean: string | null;
+  readonly marketplaceItemId: string | null;
   readonly productName: string;
   readonly status: SkuMatchStatus;
   readonly erpOrders: number;
@@ -98,6 +115,9 @@ function foldSku(value: string | null | undefined): string | null {
 
 interface Bucket {
   displayName: string;
+  erpItemId: string | null;
+  ean: string | null;
+  marketplaceItemId: string | null;
   erpOrders: Map<string, SkuErpOrderRef>;
   erpLines: number;
   erpQuantity: number;
@@ -114,6 +134,9 @@ interface Bucket {
 function emptyBucket(displayName: string): Bucket {
   return {
     displayName,
+    erpItemId: null,
+    ean: null,
+    marketplaceItemId: null,
     erpOrders: new Map(),
     erpLines: 0,
     erpQuantity: 0,
@@ -205,6 +228,7 @@ export function reconcileBySku(
       amount: order.amount + line.lineTotal,
     });
 
+    bucket.erpItemId = bucket.erpItemId ?? line.itemId;
     bucket.erpLines += 1;
     bucket.erpQuantity += quantity;
     bucket.erpRevenue += line.lineTotal;
@@ -229,6 +253,12 @@ export function reconcileBySku(
       });
     }
 
+    // An Excel-only SKU still has an item id when a confirmed or inferred
+    // mapping produced it, which is what lets its stock position be shown.
+    bucket.erpItemId = bucket.erpItemId ?? mapped.mapping.item?.itemId ?? null;
+    bucket.ean = bucket.ean ?? mapped.row.barcode ?? null;
+    bucket.marketplaceItemId =
+      bucket.marketplaceItemId ?? mapped.row.marketplaceItemId ?? null;
     bucket.excelQuantity += mapped.row.quantity ?? 0;
     bucket.excelRevenue += mapped.row.grossSales ?? 0;
     // Tracked separately from the row count because the detail list is capped.
@@ -253,6 +283,9 @@ export function reconcileBySku(
 
     return {
       sku,
+      erpItemId: bucket.erpItemId,
+      ean: bucket.ean,
+      marketplaceItemId: bucket.marketplaceItemId,
       productName: bucket.displayName,
       status,
       erpOrders: bucket.erpOrders.size,
