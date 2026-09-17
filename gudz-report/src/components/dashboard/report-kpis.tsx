@@ -1,13 +1,16 @@
 import type { ReportKpis } from "@/lib/report/marketplace-report";
+import { SELL_IN, SELL_OUT } from "@/lib/report/vocabulary";
 
 /**
  * The headline numbers.
  *
- * Both sides are shown side by side rather than as a single "revenue" figure,
- * because the whole point of the report is that the two disagree. A dashboard
- * that showed one number would be hiding the question it exists to answer.
+ * Sell-in and sell-out are shown side by side rather than as a single "revenue"
+ * figure, because the whole point of the report is that the two differ. A
+ * dashboard that showed one number would be hiding the question it exists to
+ * answer — and calling either of them "stock" would answer a different question
+ * entirely. See `report/vocabulary.ts`.
  *
- * Every ERP figure here is after the status policy: drafts and cancellations are
+ * Every sell-in figure is after the status policy: drafts and cancellations are
  * excluded before anything is summed, using the same status list sent to the ERP
  * as a filter. There is no view of this page that includes a draft order.
  */
@@ -28,20 +31,20 @@ interface Card {
 
 export function ReportKpiCards({ kpis }: { kpis: ReportKpis }) {
   const cards: Card[] = [
-    { label: "ERP Orders", value: num.format(kpis.erpOrders) },
-    { label: "ERP Customers", value: num.format(kpis.erpCustomers) },
-    { label: "ERP Units", value: num.format(kpis.erpUnits), hint: "orderedQuantity" },
-    { label: "Report Units", value: num.format(kpis.reportUnits) },
-    { label: "ERP Revenue", value: inr.format(kpis.erpRevenue) },
-    { label: "Report Revenue", value: inr.format(kpis.reportRevenue) },
-    { label: "Matched SKUs", value: num.format(kpis.skusMatched), hint: "both sides agree" },
+    { label: `${SELL_IN.label} orders`, value: num.format(kpis.erpOrders), hint: "invoiced to the marketplace" },
+    { label: `${SELL_IN.label} customers`, value: num.format(kpis.erpCustomers) },
+    { label: `${SELL_IN.label} units`, value: num.format(kpis.erpUnits), hint: "orderedQuantity" },
+    { label: `${SELL_OUT.label} units`, value: num.format(kpis.reportUnits), hint: "sold to consumers" },
+    { label: `${SELL_IN.label} revenue`, value: inr.format(kpis.erpRevenue) },
+    { label: `${SELL_OUT.label} revenue`, value: inr.format(kpis.reportRevenue) },
+    { label: "SKUs agreeing", value: num.format(kpis.skusMatched), hint: "both sides equal" },
     {
       label: "SKUs with variance",
       value: num.format(kpis.skusWithVariance),
       tone: kpis.skusWithVariance > 0 ? "warn" : "neutral",
     },
-    { label: "ERP only", value: num.format(kpis.skusErpOnly) },
-    { label: "Report only", value: num.format(kpis.skusExcelOnly) },
+    { label: `${SELL_IN.label} only`, value: num.format(kpis.skusErpOnly), hint: "invoiced, no consumer sales" },
+    { label: `${SELL_OUT.label} only`, value: num.format(kpis.skusExcelOnly), hint: "sold, nothing invoiced" },
     {
       label: "Unmapped rows",
       value: num.format(kpis.unmappedRows),

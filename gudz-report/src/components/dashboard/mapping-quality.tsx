@@ -2,6 +2,7 @@ import type {
   MarketplaceReport,
   UnmappedReportRow,
 } from "@/lib/report/marketplace-report";
+import { SELL_IN, SELL_OUT } from "@/lib/report/vocabulary";
 
 /**
  * Where the report is not trustworthy, stated plainly.
@@ -25,6 +26,7 @@ const inr = new Intl.NumberFormat("en-IN", {
 const num = new Intl.NumberFormat("en-IN");
 
 const ROUTE_LABELS: Record<string, string> = {
+  confirmed: "Confirmed by a person",
   channelMapping: "ERP channel mapping",
   barcode: "EAN matched a catalogue barcode",
   sku: "Row carried the ERP SKU",
@@ -40,9 +42,8 @@ export function MappingQuality({ report }: { report: MarketplaceReport }) {
       <div>
         <h2 className="text-lg font-semibold">Data quality</h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Every row the report could not place, and why. These are the rows whose
-          quantity and revenue are counted in the totals but cannot be compared
-          against the ERP.
+          Every row the report could not place, and why. Their sell-out is counted
+          in the totals, but there is no sell-in figure to compare it against.
         </p>
       </div>
 
@@ -58,9 +59,12 @@ export function MappingQuality({ report }: { report: MarketplaceReport }) {
           value={mapping ? num.format(mapping.unmapped) : "—"}
           tone={mapping && mapping.unmapped > 0 ? "warn" : undefined}
         />
-        <Tile label="ERP-only SKUs" value={num.format(reconciliation.counts.skusErpOnly)} />
         <Tile
-          label="Report-only SKUs"
+          label={`${SELL_IN.label}-only SKUs`}
+          value={num.format(reconciliation.counts.skusErpOnly)}
+        />
+        <Tile
+          label={`${SELL_OUT.label}-only SKUs`}
           value={num.format(reconciliation.counts.skusExcelOnly)}
         />
         <Tile

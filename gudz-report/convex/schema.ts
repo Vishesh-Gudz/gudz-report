@@ -131,6 +131,45 @@ export default defineSchema({
   }).index("by_marketplace", ["marketplace"]),
 
   /**
+   * A human's decision that one marketplace product IS one ERP item.
+   *
+   * The dashboard can infer a mapping from an EAN or a channel mapping, and
+   * where it can, it does. This table is for everything it cannot: the real
+   * Healthy Master catalogue carries a barcode on 446 of 3,067 items, and 83 of
+   * those barcodes are shared, so a large share of any marketplace sheet reaches
+   * no ERP product at all. Guessing by product name would close the gap and
+   * quietly invent revenue; recording what a person confirmed closes it honestly.
+   *
+   * Keyed per marketplace, because the same EAN can be listed by several of them
+   * and the same marketplace item id means nothing outside its own channel. One
+   * of `ean` / `marketplaceItemId` identifies the product; both are stored when
+   * both are known so a sheet that later drops one still resolves.
+   *
+   * `erpSku` and `erpName` are copies taken at confirmation time. They are not
+   * the identity — `erpItemId` is — but a mapping whose product was since
+   * renamed should still say which product a person was looking at when they
+   * confirmed it.
+   */
+  productMappings: defineTable({
+    marketplace: v.string(),
+    /** Normalised upper-case. Null when the sheet gave no usable EAN. */
+    ean: v.union(v.string(), v.null()),
+    /** The marketplace's own product id, upper-cased. */
+    marketplaceItemId: v.union(v.string(), v.null()),
+    erpItemId: v.string(),
+    erpSku: v.string(),
+    /** The ERP product name as it read when this was confirmed. */
+    erpName: v.string(),
+    /** Free text: why this pairing, for whoever reads it in six months. */
+    note: v.union(v.string(), v.null()),
+    confirmedAt: v.number(),
+    confirmedBy: v.union(v.string(), v.null()),
+  })
+    .index("by_marketplace", ["marketplace"])
+    .index("by_marketplace_ean", ["marketplace", "ean"])
+    .index("by_marketplace_itemId", ["marketplace", "marketplaceItemId"]),
+
+  /**
    * The outcome of matching one spreadsheet line to one ERP sales-order line.
    *
    * `salesOrderId` / `salesOrderItemId` are ERP ids held as plain strings, not

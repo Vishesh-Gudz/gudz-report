@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { FileSpreadsheet, LayoutDashboard } from "lucide-react";
+import { FileSpreadsheet, LayoutDashboard, Link2 } from "lucide-react";
+
+import { REPORT_TITLE } from "@/lib/report/vocabulary";
 
 export default function Home() {
   return (
@@ -7,7 +9,8 @@ export default function Home() {
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Gudz Report</h1>
         <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-          Marketplace sales reconciled against ERP B2B sales orders.
+          Sell-in against sell-out: what Healthy Master invoiced to a marketplace,
+          compared with what that marketplace reports selling to consumers.
         </p>
       </div>
 
@@ -17,7 +20,7 @@ export default function Home() {
           className="flex items-center gap-3 rounded-lg border border-zinc-200 px-4 py-3 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
         >
           <LayoutDashboard className="h-5 w-5 text-zinc-500" aria-hidden />
-          <span className="font-medium">Dashboard</span>
+          <span className="font-medium">{REPORT_TITLE}</span>
         </Link>
 
         <Link
@@ -26,6 +29,14 @@ export default function Home() {
         >
           <FileSpreadsheet className="h-5 w-5 text-zinc-500" aria-hidden />
           <span className="font-medium">Imports</span>
+        </Link>
+
+        <Link
+          href="/mappings"
+          className="flex items-center gap-3 rounded-lg border border-zinc-200 px-4 py-3 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
+        >
+          <Link2 className="h-5 w-5 text-zinc-500" aria-hidden />
+          <span className="font-medium">Product mappings</span>
         </Link>
       </nav>
     </main>

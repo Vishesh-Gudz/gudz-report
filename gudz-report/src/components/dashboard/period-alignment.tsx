@@ -3,6 +3,7 @@ import type {
   ExcelSideSummary,
 } from "@/lib/report/marketplace-report";
 import type { ReportingPeriod } from "@/lib/dates/reporting-period";
+import { SELL_IN, SELL_OUT } from "@/lib/report/vocabulary";
 
 /**
  * Do both halves actually describe the same window?
@@ -12,10 +13,10 @@ import type { ReportingPeriod } from "@/lib/dates/reporting-period";
  * covering June to August compared against an ERP query for August produces a
  * page full of plausible variances that are really just missing months.
  *
- * The two sides are deliberately labelled by where the number came from rather
- * than merged into one figure. "Report" is what the marketplace says it sold;
- * "ERP" is what Healthy Master invoiced to the marketplace. They are different
- * measurements and the gap between them is the report.
+ * The two sides are labelled by what they measure, not by which system they came
+ * from: sell-out is what the marketplace says it sold to consumers, sell-in is
+ * what Healthy Master invoiced to the marketplace. Different events, different
+ * times, and the gap between them is the report. See `report/vocabulary.ts`.
  */
 
 const inr = new Intl.NumberFormat("en-IN", {
@@ -46,10 +47,11 @@ export function PeriodAlignment({
     <section className="grid gap-3 md:grid-cols-2">
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h3 className="text-sm font-medium">
-          Report {excel.sheet ? <code className="text-xs">{excel.sheet}</code> : null}
+          {SELL_OUT.label}{" "}
+          {excel.sheet ? <code className="text-xs">{excel.sheet}</code> : null}
         </h3>
         <p className="mt-1 text-xs text-zinc-500">
-          {excel.fileName ?? "No import loaded"}
+          {SELL_OUT.source} · {excel.fileName ?? "no import loaded"}
         </p>
         <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
           <Fact label="Date range" value={
@@ -81,7 +83,9 @@ export function PeriodAlignment({
       </div>
 
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h3 className="text-sm font-medium">ERP B2B sales orders</h3>
+        <h3 className="text-sm font-medium">
+          {SELL_IN.label} · {SELL_IN.source}
+        </h3>
         <p className="mt-1 text-xs text-zinc-500">
           {erp.gstins.length > 0
             ? `Customer GSTIN ${erp.gstins.join(", ")}`

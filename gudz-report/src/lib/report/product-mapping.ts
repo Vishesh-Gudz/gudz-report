@@ -32,6 +32,8 @@ import type { NormalizedExcelRow } from "../../types/excel";
 
 /** How a row reached its ERP item. Ordered most to least authoritative. */
 export type MappingRoute =
+  /** A person looked at this product and confirmed which ERP item it is. */
+  | "confirmed"
   /** A channel mapping recorded in the ERP: someone stated this key *is* this item. */
   | "channelMapping"
   /** The marketplace's EAN equals the item's barcode. */
@@ -69,7 +71,61 @@ export interface MappableRow {
   readonly productName?: string | null;
 }
 
+/**
+ * A mapping a human confirmed, as stored in Convex.
+ *
+ * Either identifier resolves it. Both are held when both were known, so a sheet
+ * that later stops carrying an EAN still resolves on its marketplace id.
+ */
+export interface ConfirmedMapping {
+  readonly ean: string | null;
+  readonly marketplaceItemId: string | null;
+  readonly erpItemId: string;
+  readonly erpSku: string;
+  readonly erpName: string;
+}
+
+/**
+ * Confirmed mappings, indexed by both identifiers.
+ *
+ * Kept as its own small index rather than folded into `CatalogIndex`: the
+ * catalogue is ERP data on a ten-minute cache, and these are this dashboard's
+ * own decisions, which must take effect the moment somebody saves one.
+ */
+export class ConfirmedMappingIndex {
+  private readonly byEan = new Map<string, ConfirmedMapping>();
+  private readonly byItemId = new Map<string, ConfirmedMapping>();
+
+  readonly size: number;
+
+  constructor(mappings: ReadonlyArray<ConfirmedMapping>) {
+    for (const mapping of mappings) {
+      const ean = fold(mapping.ean);
+      if (ean) this.byEan.set(ean, mapping);
+      const itemId = fold(mapping.marketplaceItemId);
+      if (itemId) this.byItemId.set(itemId, mapping);
+    }
+    this.size = mappings.length;
+  }
+
+  find(row: MappableRow): ConfirmedMapping | null {
+    const ean = fold(row.barcode) ?? fold(row.sku);
+    if (ean) {
+      const hit = this.byEan.get(ean);
+      if (hit) return hit;
+    }
+    const itemId = fold(row.marketplaceItemId);
+    if (itemId) {
+      const hit = this.byItemId.get(itemId);
+      if (hit) return hit;
+    }
+    return null;
+  }
+}
+
 export interface MappingOptions {
+  /** Mappings a human has already confirmed. They outrank every inferred route. */
+  readonly confirmed?: ConfirmedMappingIndex | null;
   /**
    * The ERP `channelItemMappings.provider` this marketplace trades under, when
    * one is configured. Passed in rather than derived: the ERP's provider
@@ -267,7 +323,33 @@ export function resolveProduct(
     };
   }
 
-  // 1. A recorded channel mapping. Someone stated this key is this item, which
+  // 1. A confirmation somebody made in this dashboard. It outranks everything
+  //    else because it is the only route where a person actually knew, rather
+  //    than the report inferring from an identifier that may be shared or wrong.
+  const confirmed = options?.confirmed?.find(row) ?? null;
+  if (confirmed) {
+    return {
+      status: "mapped",
+      route: "confirmed",
+      item: {
+        itemId: confirmed.erpItemId,
+        sku: confirmed.erpSku,
+        name: confirmed.erpName,
+        barcode: null,
+      },
+      candidates: [
+        {
+          itemId: confirmed.erpItemId,
+          sku: confirmed.erpSku,
+          name: confirmed.erpName,
+          barcode: null,
+        },
+      ],
+      reason: ROUTE_REASONS.confirmed,
+    };
+  }
+
+  // 2. A recorded channel mapping. Someone stated this key is this item, which
   //    beats any identifier we could infer.
   if (options?.channelProvider) {
     for (const key of [row.marketplaceItemId, row.sku, row.barcode]) {
@@ -285,7 +367,7 @@ export function resolveProduct(
     }
   }
 
-  // 2. EAN against the catalogue's barcode. The main route for this workbook.
+  // 3. EAN against the catalogue's barcode. The main route for this workbook.
   for (const value of [row.barcode, row.sku]) {
     const hits = catalog.itemsForBarcode(value);
     if (hits.length === 1) return mapped(hits[0]!, "barcode");
@@ -298,13 +380,13 @@ export function resolveProduct(
     }
   }
 
-  // 3. The row already carrying an ERP SKU. Rare from a marketplace, but free.
+  // 4. The row already carrying an ERP SKU. Rare from a marketplace, but free.
   for (const value of [row.sku, row.marketplaceItemId]) {
     const item = catalog.itemForSku(value);
     if (item) return mapped(item, "sku");
   }
 
-  // 4. Name similarity — a suggestion for a human, never a decision.
+  // 5. Name similarity — a suggestion for a human, never a decision.
   if (options?.suggestByName !== false) {
     const suggestions = catalog.suggestByName(row.productName);
     if (suggestions.length > 0) {
@@ -358,6 +440,7 @@ function ambiguous(
 }
 
 const ROUTE_REASONS: Record<MappingRoute, string> = {
+  confirmed: "Confirmed by a person in this dashboard.",
   channelMapping: "Matched a channel mapping recorded in the ERP.",
   barcode: "The row's EAN matches this catalogue item's barcode.",
   sku: "The row already carried the ERP's own SKU.",
@@ -412,6 +495,7 @@ export function mapExcelRows(
 
   const productKeys = new Map<string, MappingStatus>();
   const byRoute: Record<MappingRoute, number> = {
+    confirmed: 0,
     channelMapping: 0,
     barcode: 0,
     sku: 0,

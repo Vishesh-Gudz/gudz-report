@@ -16,7 +16,9 @@ import { fetchReportLines } from "./erp-lines";
 import { isReportableStatus, reportedQuantity } from "./policy";
 import {
   CatalogIndex,
+  ConfirmedMappingIndex,
   mapExcelRows,
+  type ConfirmedMapping,
   type MappedExcelRow,
   type MappingStatistics,
 } from "./product-mapping";
@@ -102,6 +104,8 @@ export interface UnmappedReportRow {
   readonly orderDate: string | null;
   readonly productName: string | null;
   readonly marketplaceItemId: string | null;
+  /** The row's EAN, kept apart from `sku` because a confirmation keys on it. */
+  readonly ean: string | null;
   readonly sku: string | null;
   readonly quantity: number | null;
   readonly amount: number | null;
@@ -109,7 +113,12 @@ export interface UnmappedReportRow {
   readonly rowCount: number;
   readonly status: "ambiguous" | "unmapped";
   readonly reason: string;
-  readonly candidates: ReadonlyArray<{ sku: string; name: string }>;
+  readonly candidates: ReadonlyArray<{
+    /** The ERP identity. Carried so a confirmation records an item, not a SKU. */
+    itemId: string;
+    sku: string;
+    name: string;
+  }>;
 }
 
 export interface MarketplaceReport {
@@ -128,6 +137,8 @@ export interface MarketplaceReport {
     readonly fromCache: boolean;
   } | null;
   readonly availableMarketplaces: ReadonlyArray<MarketplaceConfig>;
+  /** How many mappings a person has confirmed for this marketplace. */
+  readonly confirmedMappingCount: number;
   readonly erpAvailable: boolean;
   readonly convexAvailable: boolean;
   readonly warnings: string[];
@@ -399,9 +410,22 @@ export async function loadMarketplaceReport(
     }
   }
 
+  // Read fresh every time rather than cached alongside the catalogue: a person
+  // who has just confirmed a mapping expects the next render to reflect it.
+  const confirmedDocs = marketplace
+    ? await readConvex<ConfirmedMapping[]>(
+        anyApi.productMappings.listForMarketplace,
+        { marketplace },
+        [],
+        warnings,
+        "confirmed product mappings",
+      )
+    : [];
+
   const mappingResult = catalogIndex
     ? mapExcelRows(excelRows, catalogIndex, {
         channelProvider: config?.erpChannelProvider ?? null,
+        confirmed: new ConfirmedMappingIndex(confirmedDocs),
       })
     : null;
 
@@ -471,6 +495,7 @@ export async function loadMarketplaceReport(
       ? { ...catalogIndex.counts, fromCache: catalogFromCache }
       : null,
     availableMarketplaces: marketplaceDocs,
+    confirmedMappingCount: confirmedDocs.length,
     erpAvailable,
     convexAvailable: getConvexClient() !== null,
     warnings,
@@ -507,6 +532,7 @@ function buildUnmappedRows(rows: ReadonlyArray<MappedExcelRow>): UnmappedReportR
       orderDate: entry.row.orderDate,
       productName: entry.row.productName,
       marketplaceItemId: entry.row.marketplaceItemId,
+      ean: entry.row.barcode ?? entry.row.sku,
       sku: entry.row.sku ?? entry.row.barcode,
       quantity: entry.row.quantity,
       amount: entry.row.grossSales,
@@ -514,6 +540,7 @@ function buildUnmappedRows(rows: ReadonlyArray<MappedExcelRow>): UnmappedReportR
       status: entry.mapping.status === "ambiguous" ? "ambiguous" : "unmapped",
       reason: entry.mapping.reason,
       candidates: entry.mapping.candidates.map((candidate) => ({
+        itemId: candidate.itemId,
         sku: candidate.sku,
         name: candidate.name,
       })),

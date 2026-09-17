@@ -20,6 +20,12 @@ import type {
   SkuMatchStatus,
   SkuReconciliationRow,
 } from "@/lib/report/sku-reconciliation";
+import {
+  SELL_IN,
+  SELL_OUT,
+  SKU_STATUS_HINTS,
+  SKU_STATUS_LABELS,
+} from "@/lib/report/vocabulary";
 
 /**
  * The main reconciliation table: one row per SKU, both sides, and the gap.
@@ -69,12 +75,7 @@ const pct = new Intl.NumberFormat("en-IN", {
   signDisplay: "exceptZero",
 });
 
-const STATUS_LABELS: Record<SkuMatchStatus, string> = {
-  matched: "Matched",
-  variance: "Variance",
-  erpOnly: "ERP only",
-  excelOnly: "Report only",
-};
+const STATUS_LABELS: Record<SkuMatchStatus, string> = SKU_STATUS_LABELS;
 
 const STATUS_CLASSES: Record<SkuMatchStatus, string> = {
   matched: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
@@ -86,6 +87,7 @@ const STATUS_CLASSES: Record<SkuMatchStatus, string> = {
 function StatusBadge({ status }: { status: SkuMatchStatus }) {
   return (
     <span
+      title={SKU_STATUS_HINTS[status]}
       className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${STATUS_CLASSES[status]}`}
     >
       {STATUS_LABELS[status]}
@@ -134,15 +136,15 @@ const columns = helper.columns([
     cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span>,
   }),
   helper.accessor("erpOrders", {
-    header: "ERP Orders",
+    header: `${SELL_IN.label} Orders`,
     cell: (info) => num.format(info.getValue()),
   }),
   helper.accessor("erpQuantity", {
-    header: "ERP Qty",
+    header: `${SELL_IN.label} Qty`,
     cell: (info) => num.format(info.getValue()),
   }),
   helper.accessor("excelQuantity", {
-    header: "Report Qty",
+    header: `${SELL_OUT.label} Qty`,
     cell: (info) => num.format(info.getValue()),
   }),
   helper.accessor("quantityVariance", {
@@ -154,11 +156,11 @@ const columns = helper.columns([
     cell: (info) => <Variance value={info.getValue()} percent />,
   }),
   helper.accessor("erpRevenue", {
-    header: "ERP Revenue",
+    header: `${SELL_IN.label} Revenue`,
     cell: (info) => inr.format(info.getValue()),
   }),
   helper.accessor("excelRevenue", {
-    header: "Report Revenue",
+    header: `${SELL_OUT.label} Revenue`,
     cell: (info) => inr.format(info.getValue()),
   }),
   helper.accessor("amountVariance", {
@@ -184,12 +186,13 @@ function ProductDetail({ row }: { row: SkuReconciliationRow }) {
     <div className="grid gap-6 bg-zinc-50 px-4 py-4 text-sm md:grid-cols-2 dark:bg-zinc-900">
       <div>
         <h4 className="font-medium">
-          ERP · {num.format(row.erpOrders)} order{row.erpOrders === 1 ? "" : "s"} ·{" "}
+          {SELL_IN.label} · {num.format(row.erpOrders)} order
+          {row.erpOrders === 1 ? "" : "s"} ·{" "}
           {num.format(row.erpQuantity)} units · {inr.format(row.erpRevenue)}
         </h4>
         {row.erpOrderRefs.length === 0 ? (
           <p className="mt-2 text-zinc-500">
-            No ERP sales-order line in this period carries this SKU.
+            Nothing was invoiced to the marketplace for this SKU in this period.
           </p>
         ) : (
           <table className="mt-2 w-full">
@@ -219,12 +222,13 @@ function ProductDetail({ row }: { row: SkuReconciliationRow }) {
 
       <div>
         <h4 className="font-medium">
-          Report · {num.format(row.excelRows)} row{row.excelRows === 1 ? "" : "s"} ·{" "}
+          {SELL_OUT.label} · {num.format(row.excelRows)} row
+          {row.excelRows === 1 ? "" : "s"} ·{" "}
           {num.format(row.excelQuantity)} units · {inr.format(row.excelRevenue)}
         </h4>
         {row.excelRowRefs.length === 0 ? (
           <p className="mt-2 text-zinc-500">
-            No spreadsheet row reached this SKU.
+            The marketplace reported no consumer sales reaching this SKU.
           </p>
         ) : (
           <>
@@ -276,10 +280,10 @@ function ProductDetail({ row }: { row: SkuReconciliationRow }) {
         </p>
         {!row.mappedToErp && row.excelRows > 0 ? (
           <p className="mt-1 text-amber-700 dark:text-amber-500">
-            These spreadsheet rows never reached an ERP product, so this SKU is the
+            These rows never reached an ERP product, so this SKU is the
             marketplace&rsquo;s own identifier rather than the ERP&rsquo;s. Its
-            quantity and revenue are counted, but no ERP figure can be compared
-            against them.
+            sell-out is counted, but there is no sell-in figure to compare it
+            against. Resolve it on the product mappings screen.
           </p>
         ) : null}
       </div>

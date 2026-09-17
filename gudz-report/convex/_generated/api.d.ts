@@ -12,6 +12,7 @@ import type * as erp from "../erp.js";
 import type * as excel from "../excel.js";
 import type * as imports from "../imports.js";
 import type * as marketplaces from "../marketplaces.js";
+import type * as productMappings from "../productMappings.js";
 import type * as reconciliation from "../reconciliation.js";
 
 import type {
@@ -25,6 +26,7 @@ declare const fullApi: ApiFromModules<{
   excel: typeof excel;
   imports: typeof imports;
   marketplaces: typeof marketplaces;
+  productMappings: typeof productMappings;
   reconciliation: typeof reconciliation;
 }>;
 
