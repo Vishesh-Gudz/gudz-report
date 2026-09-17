@@ -1,16 +1,14 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { Download } from "lucide-react";
 
-import type { SnapshotRow, SnapshotView } from "@/lib/report/snapshot-model";
+import type { SnapshotView } from "@/lib/report/snapshot-model";
+import { buildExport, exportFileName, toCsv } from "@/lib/report/export";
 import {
   CURRENT_SOH,
-  DAMAGE,
   GRN,
-  MAPPING_LABELS,
-  RETURNED,
   REPORT_SUBTITLE,
   REPORT_TITLE,
   SALES_QUANTITY,
@@ -38,11 +36,6 @@ function formatDay(day: string): string {
       });
 }
 
-function csvCell(value: string | number | null): string {
-  if (value === null) return "—";
-  const text = String(value);
-  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
 
 export function ReportShell({
   snapshot,
@@ -52,58 +45,50 @@ export function ReportShell({
   children: React.ReactNode;
 }) {
   const anchorRef = useRef<HTMLAnchorElement>(null);
+  const [busy, setBusy] = useState(false);
 
   const marketplaceLabel =
     snapshot.marketplaces.length === 1
       ? snapshot.marketplaces[0]!
       : `All (${snapshot.marketplaces.length})`;
 
-  function exportCsv() {
-    const header = [
-      "Marketplace",
-      "Product",
-      "SKU",
-      "EAN",
-      "Month",
-      CURRENT_SOH.label,
-      GRN.label,
-      SALES_QUANTITY.label,
-      "Sales Value",
-      DAMAGE.label,
-      RETURNED.label,
-      "Status",
-    ];
-
-    const body = snapshot.rows.map((row: SnapshotRow) =>
-      [
-        row.marketplace,
-        row.productName,
-        row.sku,
-        row.ean,
-        row.month,
-        row.currentSoh,
-        row.grn,
-        row.salesQuantity,
-        Math.round(row.salesValue),
-        row.damage,
-        row.returned,
-        MAPPING_LABELS[row.mappingStatus],
-      ].map(csvCell),
-    );
-
-    const csv = [header.map(csvCell), ...body].map((line) => line.join(",")).join("\r\n");
-    // A BOM, so Excel reads the product names as UTF-8 rather than mojibake.
-    const blob = new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-
+  function download(blob: Blob, fileName: string) {
     const anchor = anchorRef.current;
     if (!anchor) return;
+    const url = URL.createObjectURL(blob);
     anchor.href = url;
-    anchor.download = `soh-report-${marketplaceLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${
-      snapshot.periodStart ?? new Date(snapshot.createdAt).toISOString().slice(0, 10)
-    }.csv`;
+    anchor.download = fileName;
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  function exportCsv() {
+    // A BOM, so Excel reads the product names as UTF-8 rather than mojibake.
+    download(
+      new Blob(["﻿", toCsv(snapshot.rows)], { type: "text/csv;charset=utf-8" }),
+      exportFileName(marketplaceLabel, snapshot.periodStart, snapshot.createdAt, "csv"),
+    );
+  }
+
+  async function exportXlsx() {
+    setBusy(true);
+    try {
+      // Loaded on demand. The sheet library is several hundred kilobytes and
+      // most readers never export, so it stays out of the page bundle.
+      const XLSX = await import("xlsx");
+      const sheet = XLSX.utils.aoa_to_sheet(buildExport(snapshot.rows));
+      const book = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(book, sheet, "SOH Report");
+      const bytes = XLSX.write(book, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+      download(
+        new Blob([bytes], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        exportFileName(marketplaceLabel, snapshot.periodStart, snapshot.createdAt, "xlsx"),
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -167,10 +152,19 @@ export function ReportShell({
                 type="button"
                 onClick={exportCsv}
                 disabled={snapshot.rows.length === 0}
+                className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden />
+                CSV
+              </button>
+              <button
+                type="button"
+                onClick={exportXlsx}
+                disabled={snapshot.rows.length === 0 || busy}
                 className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-40"
               >
                 <Download className="h-3.5 w-3.5" aria-hidden />
-                Export
+                {busy ? "Preparing…" : "Excel"}
               </button>
               {/* Programmatic download target: the file is generated in the
                   browser, so there is no URL until the click happens. */}
