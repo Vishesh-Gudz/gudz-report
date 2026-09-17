@@ -16,28 +16,34 @@ import type { SohProductRow } from "@/lib/report/soh-rows";
 
 export function ReportView({
   rows,
-  period,
-  marketplace,
+  marketplaces,
 }: {
   rows: SohProductRow[];
-  period: { from: string; to: string };
-  marketplace: string;
+  marketplaces: string[];
 }) {
   const [selected, setSelected] = useState<SohProductRow | null>(null);
+  const [marketplace, setMarketplace] = useState("");
+
+  // Filtering here rather than inside the table so the totals strip above can
+  // be told what is on screen without the table having to report upward.
+  const visible = marketplace
+    ? rows.filter((row) => row.marketplace === marketplace)
+    : rows;
 
   return (
     <>
       <SohTable
-        rows={rows}
-        onSelect={(row) => setSelected(row)}
-        selectedSku={selected?.sku ?? null}
-      />
-      <ProductDrawer
-        row={selected}
-        period={period}
+        rows={visible}
+        marketplaces={marketplaces}
         marketplace={marketplace}
-        onClose={() => setSelected(null)}
+        onMarketplaceChange={(value) => {
+          setMarketplace(value);
+          setSelected(null);
+        }}
+        onSelect={(row) => setSelected(row)}
+        selectedId={selected?.id ?? null}
       />
+      <ProductDrawer row={selected} onClose={() => setSelected(null)} />
     </>
   );
 }

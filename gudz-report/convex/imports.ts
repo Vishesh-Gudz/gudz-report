@@ -104,6 +104,8 @@ export const recordParseResult = mutation({
 export const insertRows = mutation({
   args: {
     importId: v.id("imports"),
+    marketplace: v.optional(v.string()),
+    sheetName: v.optional(v.string()),
     rows: v.array(
       v.object({
         sourceRow: v.number(),
@@ -129,9 +131,114 @@ export const insertRows = mutation({
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     for (const row of args.rows) {
-      await ctx.db.insert("excelRows", { importId: args.importId, ...row });
+      await ctx.db.insert("excelRows", {
+        importId: args.importId,
+        marketplace: args.marketplace,
+        sheetName: args.sheetName,
+        ...row,
+      });
     }
     return args.rows.length;
+  },
+});
+
+/**
+ * Records one marketplace sheet's outcome inside an upload.
+ *
+ * Upsert on (import, marketplace), so re-processing a sheet corrects its result
+ * rather than filing a second one. Two rows for one marketplace would be counted
+ * twice by every total on the dashboard.
+ */
+export const recordSheet = mutation({
+  args: {
+    importId: v.id("imports"),
+    marketplace: v.string(),
+    sheetName: v.string(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    minDate: v.union(v.string(), v.null()),
+    maxDate: v.union(v.string(), v.null()),
+    totalRows: v.number(),
+    validRows: v.number(),
+    invalidRows: v.number(),
+    identifiersFromSheet: v.number(),
+    identifiersFromMaster: v.number(),
+    identifiersUnresolved: v.number(),
+    errorMessage: v.union(v.string(), v.null()),
+  },
+  returns: v.id("importSheets"),
+  handler: async (ctx, args): Promise<Id<"importSheets">> => {
+    const existing = await ctx.db
+      .query("importSheets")
+      .withIndex("by_importId_marketplace", (q) =>
+        q.eq("importId", args.importId).eq("marketplace", args.marketplace),
+      )
+      .unique();
+
+    const fields = { ...args, processedAt: Date.now() };
+    if (existing) {
+      await ctx.db.patch(existing._id, fields);
+      return existing._id;
+    }
+    return await ctx.db.insert("importSheets", fields);
+  },
+});
+
+/**
+ * Clears one marketplace's rows from an upload before they are rewritten.
+ *
+ * The guard against double counting: processing a sheet twice must replace its
+ * rows, never append to them. Scoped to one marketplace so re-running Blinkit
+ * cannot touch Zepto's rows.
+ */
+export const clearSheetRows = mutation({
+  args: { importId: v.id("imports"), marketplace: v.string() },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const rows = await ctx.db
+      .query("excelRows")
+      .withIndex("by_importId_marketplace", (q) =>
+        q.eq("importId", args.importId).eq("marketplace", args.marketplace),
+      )
+      .collect();
+    for (const row of rows) await ctx.db.delete(row._id);
+    return rows.length;
+  },
+});
+
+export const sheetsForImport = query({
+  args: { importId: v.id("imports") },
+  handler: async (ctx, args): Promise<Doc<"importSheets">[]> => {
+    return await ctx.db
+      .query("importSheets")
+      .withIndex("by_importId", (q) => q.eq("importId", args.importId))
+      .collect();
+  },
+});
+
+/**
+ * One page of a single marketplace's rows.
+ *
+ * Convex refuses to return more than 8,192 items from a query and a marketplace
+ * month runs well past that, so the caller walks pages. Scoped per marketplace
+ * because the report reconciles each against its own ERP window.
+ */
+export const sheetRowsPage = query({
+  args: {
+    importId: v.id("imports"),
+    marketplace: v.string(),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("excelRows")
+      .withIndex("by_importId_marketplace", (q) =>
+        q.eq("importId", args.importId).eq("marketplace", args.marketplace),
+      )
+      .paginate({
+        cursor: args.cursor,
+        numItems: Math.min(Math.max(args.numItems ?? 2000, 1), 4000),
+      });
   },
 });
 
@@ -220,6 +327,12 @@ export const remove = mutation({
       .withIndex("by_importId", (q) => q.eq("importId", args.importId))
       .collect();
     for (const row of rows) await ctx.db.delete(row._id);
+
+    const sheets = await ctx.db
+      .query("importSheets")
+      .withIndex("by_importId", (q) => q.eq("importId", args.importId))
+      .collect();
+    for (const sheet of sheets) await ctx.db.delete(sheet._id);
 
     await ctx.db.delete(args.importId);
     return null;

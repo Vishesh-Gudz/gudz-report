@@ -20,7 +20,8 @@ import { SELL_IN, SELL_OUT, STOCK_ON_HAND } from "@/lib/report/vocabulary";
  * a reader who has had the page open since morning should be able to say so.
  */
 
-function csvCell(value: string | number | null): string {
+function csvCell(value: string | number | null | undefined): string {
+  if (value === undefined) return "";
   if (value === null) return "";
   const text = String(value);
   // Leading separators and quotes are what turn a product name into a broken
@@ -30,13 +31,12 @@ function csvCell(value: string | number | null): string {
 
 export function ReportActions({
   rows,
-  marketplace,
-  period,
+  fileLabel,
   onChangeReport,
 }: {
   rows: SohProductRow[];
-  marketplace: string;
-  period: { from: string; to: string };
+  /** Used only to name the download; the figures come from the rows. */
+  fileLabel: string;
   onChangeReport: () => void;
 }) {
   const router = useRouter();
@@ -45,6 +45,9 @@ export function ReportActions({
 
   function exportCsv() {
     const header = [
+      "Marketplace",
+      "Period from",
+      "Period to",
       "Product",
       "SKU",
       "EAN",
@@ -64,6 +67,9 @@ export function ReportActions({
 
     const body = rows.map((row) =>
       [
+        row.marketplace,
+        row.periodFrom,
+        row.periodTo,
         row.productName,
         row.sku,
         row.ean,
@@ -74,9 +80,9 @@ export function ReportActions({
         row.sellIn,
         row.sellOut,
         row.quantityVariance,
-        Math.round(row.sellInRevenue),
+        row.sellInRevenue === null ? null : Math.round(row.sellInRevenue),
         Math.round(row.sellOutRevenue),
-        Math.round(row.revenueVariance),
+        row.revenueVariance === null ? null : Math.round(row.revenueVariance),
         row.status,
         row.mapping,
       ].map(csvCell),
@@ -90,7 +96,7 @@ export function ReportActions({
     const anchor = anchorRef.current;
     if (!anchor) return;
     anchor.href = url;
-    anchor.download = `soh-report-${marketplace}-${period.from}-to-${period.to}.csv`;
+    anchor.download = `soh-report-${fileLabel}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
   }

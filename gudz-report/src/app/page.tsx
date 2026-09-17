@@ -2,17 +2,14 @@ import Link from "next/link";
 import { anyApi } from "convex/server";
 
 import { DataQualityPanel } from "@/components/soh/data-quality-panel";
+import { MarketplaceSummary } from "@/components/soh/marketplace-summary";
 import { ReportShell } from "@/components/soh/report-shell";
 import { ReportView } from "@/components/soh/report-view";
 import { SummaryStrip } from "@/components/soh/summary-strip";
 import { UploadFlow } from "@/components/soh/upload-flow";
 import { getConvexClient } from "@/lib/convex/server";
-import { monthPeriod } from "@/lib/dates/reporting-period";
-import {
-  listImports,
-  loadMarketplaceReport,
-} from "@/lib/report/marketplace-report";
-import { buildSohRows } from "@/lib/report/soh-rows";
+import { loadSohReport } from "@/lib/report/soh-report";
+import { buildSohRows, totalsFor } from "@/lib/report/soh-rows";
 import { REPORT_EXPLANATION, REPORT_SUBTITLE, REPORT_TITLE } from "@/lib/report/vocabulary";
 
 export const metadata = { title: `${REPORT_TITLE} · Healthy Master` };
@@ -27,39 +24,40 @@ export const metadata = { title: `${REPORT_TITLE} · Healthy Master` };
  */
 export const dynamic = "force-dynamic";
 
-/** Only reached when no report has ever been uploaded. */
-const FALLBACK_PERIOD = monthPeriod("2026-08");
-
 function single(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;
   const trimmed = raw?.trim();
   return trimmed ? trimmed : undefined;
 }
 
-interface ConfirmedDoc {
-  erpSku: string;
-}
-
 /**
- * Which SKUs a person confirmed, so the table can say so.
+ * Confirmed mappings per marketplace, so the table can say which rows a person
+ * decided rather than which the matcher inferred.
  *
- * The reconciliation groups on the resolved ERP SKU and no longer remembers
- * which route produced it, so the confirmed set is read here and passed down.
+ * Read per marketplace because a confirmation belongs to one: the same EAN is
+ * listed by several channels and means a different pack on each.
  */
-async function confirmedSkus(marketplace: string | null): Promise<Set<string>> {
+async function confirmedByMarketplace(
+  marketplaces: string[],
+): Promise<Map<string, Set<string>>> {
   const client = getConvexClient();
-  if (!client || !marketplace) return new Set();
-  try {
-    const docs = (await client.query(
-      anyApi.productMappings.listForMarketplace as never,
-      { marketplace } as never,
-    )) as ConfirmedDoc[];
-    return new Set(docs.map((doc) => doc.erpSku.toUpperCase()));
-  } catch {
-    // A missing confirmation list downgrades a badge, nothing more. The report
-    // itself already applied the mappings server-side.
-    return new Set();
+  const result = new Map<string, Set<string>>();
+  if (!client) return result;
+
+  for (const marketplace of marketplaces) {
+    try {
+      const docs = (await client.query(
+        anyApi.productMappings.listForMarketplace as never,
+        { marketplace } as never,
+      )) as { erpSku: string }[];
+      result.set(marketplace, new Set(docs.map((doc) => doc.erpSku.toUpperCase())));
+    } catch {
+      // A missing confirmation list downgrades a badge, nothing more — the
+      // report itself already applied the mappings server-side.
+      result.set(marketplace, new Set());
+    }
   }
+  return result;
 }
 
 export default async function HomePage({
@@ -71,13 +69,10 @@ export default async function HomePage({
   const requestedImportId = single(params.importId) ?? null;
   const wantsUpload = single(params.upload) === "1";
 
-  const imports = await listImports();
-  const usable = imports.filter(
-    (entry) => entry.status === "completed" && entry.minDate && entry.maxDate,
-  );
+  const report = await loadSohReport({ importId: requestedImportId });
+  const hasReport = report.importId !== null && report.sections.length > 0;
 
-  // Nothing has ever been uploaded, or the client asked for the upload screen.
-  if (usable.length === 0 || wantsUpload) {
+  if (!hasReport || wantsUpload) {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-8 px-6 py-20">
         <div>
@@ -86,15 +81,15 @@ export default async function HomePage({
             {REPORT_TITLE}
           </h1>
           <p className="mt-2 max-w-xl text-[14px] leading-relaxed text-zinc-600">
-            {usable.length === 0
-              ? "Upload a marketplace report to generate the latest stock and sales view."
-              : "Upload a new marketplace report, or go back to the current one."}
+            {hasReport
+              ? "Upload a new marketplace workbook, or go back to the current report."
+              : "Upload a marketplace workbook to generate the latest stock and sales view. One workbook can cover every marketplace at once."}
           </p>
         </div>
 
         <UploadFlow />
 
-        {usable.length > 0 ? (
+        {hasReport ? (
           <p className="text-[13px] text-zinc-500">
             <Link href="/" className="underline underline-offset-4 hover:text-zinc-900">
               Back to the current report
@@ -105,21 +100,26 @@ export default async function HomePage({
     );
   }
 
-  const report = await loadMarketplaceReport(
-    { importId: requestedImportId, marketplace: single(params.marketplace) ?? null },
-    FALLBACK_PERIOD,
+  const rows = buildSohRows(
+    report,
+    await confirmedByMarketplace(report.marketplaces),
   );
+  const totals = totalsFor(rows);
 
-  const rows = buildSohRows(report, await confirmedSkus(report.marketplace));
-  const importId = requestedImportId ?? usable[0]?._id ?? null;
+  const marketplaces = report.sections
+    .filter((section) => section.status === "completed")
+    .map((section) => section.marketplace);
 
   return (
     <ReportShell
       title={REPORT_TITLE}
       subtitle={REPORT_SUBTITLE}
-      marketplace={report.marketplace}
-      period={{ from: report.period.fromDay, to: report.period.toDay }}
-      sourceFileName={report.excel.fileName}
+      marketplaceLabel={
+        marketplaces.length === 1 ? marketplaces[0]! : `All (${marketplaces.length})`
+      }
+      period={report.period}
+      periodsDiffer={report.periodsDiffer}
+      sourceFileName={report.fileName}
       rows={rows}
     >
       {report.warnings.length > 0 ? (
@@ -135,19 +135,17 @@ export default async function HomePage({
         </div>
       ) : null}
 
-      <SummaryStrip report={report} />
+      <SummaryStrip totals={totals} marketplaceCount={marketplaces.length} />
 
       <p className="max-w-4xl text-[12px] leading-relaxed text-zinc-500">
         {REPORT_EXPLANATION}
       </p>
 
-      <ReportView
-        rows={rows}
-        period={{ from: report.period.fromDay, to: report.period.toDay }}
-        marketplace={report.marketplace ?? "marketplace"}
-      />
+      <MarketplaceSummary sections={report.sections} />
 
-      <DataQualityPanel report={report} importId={importId} />
+      <ReportView rows={rows} marketplaces={marketplaces} />
+
+      <DataQualityPanel report={report} totals={totals} />
     </ReportShell>
   );
 }

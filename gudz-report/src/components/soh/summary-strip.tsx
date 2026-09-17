@@ -1,16 +1,17 @@
-import type { MarketplaceReport } from "@/lib/report/marketplace-report";
+import type { SohTotals } from "@/lib/report/soh-rows";
 import { SELL_IN, SELL_OUT, STOCK_ON_HAND } from "@/lib/report/vocabulary";
 
 /**
- * The five numbers somebody quotes from this report.
+ * The numbers somebody quotes from this report.
  *
- * Restrained on purpose: one row of figures with their units named, no tiles
- * competing with the table below them. Sell-in and sell-out are shown as a pair
- * with the variance between them, because either alone is a half-answer.
+ * Sell-in and the variance are qualified rather than absolute: when only some
+ * marketplaces have an ERP customer configured, a bare total would read as a
+ * figure for the whole upload. The detail line says how many marketplaces
+ * actually contributed one, so the number cannot be quoted out of context.
  *
- * `Mapped` sits among them rather than in the data-quality section because it
- * qualifies every other number on the strip — a reader seeing "18 of 23" knows
- * immediately how much of the report is comparable.
+ * Stock is summed per distinct ERP item, not per row — one product sold on three
+ * marketplaces has one warehouse position, and adding it three times would
+ * treble it.
  */
 
 const inr = new Intl.NumberFormat("en-IN", {
@@ -54,68 +55,99 @@ function Metric({
   );
 }
 
-export function SummaryStrip({ report }: { report: MarketplaceReport }) {
-  const { reconciliation, stockAvailability, excel } = report;
-  const products = reconciliation.rows.length;
+export function SummaryStrip({
+  totals,
+  marketplaceCount,
+}: {
+  totals: SohTotals;
+  marketplaceCount: number;
+}) {
+  const partiallyReconciled =
+    totals.reconciledMarketplaces > 0 &&
+    totals.reconciledMarketplaces < marketplaceCount;
 
-  // Counted from the list the review screen actually shows, not from the
-  // row-identity tally. The two group differently — a product whose sheet rows
-  // carry a placeholder EAN forms an extra identity — and a summary that says
-  // "5 need review" over a screen listing four is a summary nobody trusts again.
-  const totalProducts = excel.mapping?.distinctProducts ?? 0;
-  const needsReview = report.unmappedRows.length;
-  const mappedProducts = Math.max(0, totalProducts - needsReview);
-
-  const variance = reconciliation.totals.quantityVariance;
+  const sellInDetail =
+    totals.reconciledMarketplaces === 0
+      ? "no marketplace configured"
+      : partiallyReconciled
+        ? `${totals.reconciledMarketplaces} of ${marketplaceCount} marketplaces · ${inr.format(totals.sellInRevenue)}`
+        : inr.format(totals.sellInRevenue);
 
   return (
     <section className="flex flex-wrap border border-zinc-200 bg-white">
       <Metric
+        label="Marketplaces"
+        value={num.format(marketplaceCount)}
+        detail={
+          totals.reconciledMarketplaces === marketplaceCount
+            ? "all reconciled"
+            : `${totals.reconciledMarketplaces} reconciled`
+        }
+        tone={partiallyReconciled || totals.reconciledMarketplaces === 0 ? "warn" : undefined}
+      />
+      <Metric
         label="Products"
-        value={num.format(products)}
-        detail={`${num.format(reconciliation.counts.skusWithVariance)} with a variance`}
+        value={num.format(totals.products)}
+        detail="one record per marketplace"
       />
       <Metric
         label="Mapped"
-        value={totalProducts > 0 ? `${mappedProducts} / ${totalProducts}` : "—"}
-        detail={
-          totalProducts > 0
-            ? needsReview === 0
-              ? "all products matched"
-              : `${needsReview} need review`
-            : "no marketplace report loaded"
-        }
-        tone={needsReview > 0 ? "warn" : undefined}
-      />
-      <Metric
-        label={STOCK_ON_HAND.label}
         value={
-          stockAvailability.currentAvailable
-            ? num.format(stockAvailability.totalAvailable)
+          totals.mappedProducts + totals.unresolvedProducts > 0
+            ? `${totals.mappedProducts} / ${totals.mappedProducts + totals.unresolvedProducts}`
             : "—"
         }
         detail={
-          stockAvailability.currentAvailable
-            ? `available now · ${num.format(stockAvailability.productsWithPosition)} products`
+          totals.unresolvedProducts === 0
+            ? "all products matched"
+            : `${totals.unresolvedProducts} need review`
+        }
+        tone={totals.unresolvedProducts > 0 ? "warn" : undefined}
+      />
+      <Metric
+        label={STOCK_ON_HAND.label}
+        value={totals.stockProducts > 0 ? num.format(totals.stockAvailable) : "—"}
+        detail={
+          totals.stockProducts > 0
+            ? `available now · ${num.format(totals.stockProducts)} products`
             : "live position unavailable"
         }
-        tone={stockAvailability.currentAvailable ? undefined : "warn"}
+        tone={totals.stockProducts > 0 ? undefined : "warn"}
       />
       <Metric
         label={SELL_IN.label}
-        value={num.format(reconciliation.totals.erpQuantity)}
-        detail={inr.format(reconciliation.totals.erpRevenue)}
+        value={totals.reconciledMarketplaces > 0 ? num.format(totals.sellIn) : "—"}
+        detail={sellInDetail}
+        tone={totals.reconciledMarketplaces === 0 ? "warn" : undefined}
       />
       <Metric
         label={SELL_OUT.label}
-        value={num.format(reconciliation.totals.excelQuantity)}
-        detail={inr.format(reconciliation.totals.excelRevenue)}
+        value={num.format(totals.sellOut)}
+        detail={inr.format(totals.sellOutRevenue)}
       />
       <Metric
-        label="Quantity variance"
-        value={`${variance > 0 ? "+" : variance < 0 ? "−" : ""}${num.format(Math.abs(variance))}`}
-        detail="sell-out minus sell-in"
-        tone={variance > 0 ? "up" : variance < 0 ? "down" : undefined}
+        label="Variance"
+        value={
+          totals.reconciledMarketplaces > 0
+            ? `${totals.quantityVariance > 0 ? "+" : totals.quantityVariance < 0 ? "−" : ""}${num.format(Math.abs(totals.quantityVariance))}`
+            : "—"
+        }
+        detail={
+          totals.reconciledMarketplaces === 0
+            ? "needs a configured marketplace"
+            : partiallyReconciled
+              ? "reconciled marketplaces only"
+              : "sell-out minus sell-in"
+        }
+        tone={
+          totals.reconciledMarketplaces === 0
+            ? "warn"
+            : totals.quantityVariance > 0
+              ? "up"
+              : totals.quantityVariance < 0
+                ? "down"
+                : undefined
+        }
       />
     </section>
   );

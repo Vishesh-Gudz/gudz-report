@@ -108,7 +108,8 @@ function MappingPill({ row }: { row: SohProductRow }) {
 }
 
 /** A signed number. Zero reads as a muted dash, not a suspicious "0". */
-function Delta({ value, money }: { value: number; money?: boolean }) {
+function Delta({ value, money }: { value: number | null; money?: boolean }) {
+  if (value === null) return <span className="text-zinc-300">—</span>;
   if (value === 0) return <span className="text-zinc-300">0</span>;
   return (
     <span className={value > 0 ? "text-amber-700" : "text-sky-700"}>
@@ -119,6 +120,13 @@ function Delta({ value, money }: { value: number; money?: boolean }) {
 }
 
 const columns = helper.columns([
+  helper.accessor("marketplace", {
+    header: "Marketplace",
+    filterFn: "includesString",
+    cell: (info) => (
+      <span className="font-medium text-zinc-700 capitalize">{info.getValue()}</span>
+    ),
+  }),
   helper.accessor("productName", {
     header: "Product",
     filterFn: "includesString",
@@ -157,7 +165,17 @@ const columns = helper.columns([
   }),
   helper.accessor("sellIn", {
     header: SELL_IN.label,
-    cell: (info) => num.format(info.getValue()),
+    cell: (info) =>
+      info.getValue() === null ? (
+        <span
+          className="text-zinc-300"
+          title="ERP reconciliation not configured for this marketplace"
+        >
+          n/a
+        </span>
+      ) : (
+        num.format(info.getValue()!)
+      ),
   }),
   helper.accessor("sellOut", {
     header: SELL_OUT.label,
@@ -190,6 +208,7 @@ const columns = helper.columns([
 
 /** Columns a reader can turn off. Identity and the headline numbers stay. */
 const OPTIONAL_COLUMNS: { id: string; label: string }[] = [
+  { id: "marketplace", label: "Marketplace" },
   { id: "ean", label: "EAN" },
   { id: "stockAvailable", label: STOCK_ON_HAND.label },
   { id: "quantityVariancePct", label: "Var %" },
@@ -201,12 +220,18 @@ type VarianceFilter = "" | "any" | "over" | "under";
 
 export function SohTable({
   rows,
+  marketplaces,
+  marketplace,
+  onMarketplaceChange,
   onSelect,
-  selectedSku,
+  selectedId,
 }: {
   rows: SohProductRow[];
+  marketplaces: string[];
+  marketplace: string;
+  onMarketplaceChange: (value: string) => void;
   onSelect: (row: SohProductRow) => void;
-  selectedSku: string | null;
+  selectedId: string | null;
 }) {
   // Memoised so a re-render does not hand the table a new array identity and
   // make it rebuild every row model.
@@ -223,13 +248,17 @@ export function SohTable({
     const needle = search.trim().toLowerCase();
     return data.filter((row) => {
       if (status && row.status !== status) return false;
+      // A marketplace with no ERP customer has no variance at all, so the
+      // variance filters exclude it rather than treating null as zero.
+      if (variance !== "" && row.quantityVariance === null) return false;
       if (variance === "any" && row.quantityVariance === 0) return false;
-      if (variance === "over" && row.quantityVariance <= 0) return false;
-      if (variance === "under" && row.quantityVariance >= 0) return false;
+      if (variance === "over" && (row.quantityVariance ?? 0) <= 0) return false;
+      if (variance === "under" && (row.quantityVariance ?? 0) >= 0) return false;
       if (!needle) return true;
       return (
         row.productName.toLowerCase().includes(needle) ||
         row.sku.toLowerCase().includes(needle) ||
+        row.marketplace.toLowerCase().includes(needle) ||
         (row.ean ?? "").toLowerCase().includes(needle) ||
         (row.marketplaceItemId ?? "").toLowerCase().includes(needle)
       );
@@ -258,7 +287,7 @@ export function SohTable({
 
   const totals = filtered.reduce(
     (acc, row) => ({
-      sellIn: acc.sellIn + row.sellIn,
+      sellIn: acc.sellIn + (row.sellIn ?? 0),
       sellOut: acc.sellOut + row.sellOut,
       stock: acc.stock + (row.stockAvailable ?? 0),
     }),
@@ -271,6 +300,22 @@ export function SohTable({
   return (
     <section className="flex flex-col">
       <div className="flex flex-wrap items-center gap-2 border border-b-0 border-zinc-200 bg-white px-3 py-2.5">
+        {marketplaces.length > 1 ? (
+          <select
+            value={marketplace}
+            onChange={(event) => onMarketplaceChange(event.target.value)}
+            aria-label="Filter by marketplace"
+            className="h-8 rounded border border-zinc-200 bg-white px-2 text-[13px] font-medium text-zinc-900 capitalize focus:border-zinc-400 focus:outline-none"
+          >
+            <option value="">All marketplaces</option>
+            {marketplaces.map((name) => (
+              <option key={name} value={name} className="capitalize">
+                {name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+
         <div className="relative">
           <Search
             className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
@@ -367,7 +412,7 @@ export function SohTable({
               <tr key={group.id}>
                 {group.headers.map((header, columnIndex) => {
                   const sorted = header.column.getIsSorted();
-                  const numeric = columnIndex >= 3 && columnIndex <= 7;
+                  const numeric = columnIndex >= 4 && columnIndex <= 8;
                   return (
                     <th
                       key={header.id}
@@ -411,7 +456,7 @@ export function SohTable({
               </tr>
             ) : (
               visible.map((row) => {
-                const selected = row.original.sku === selectedSku;
+                const selected = row.original.sku === selectedId;
                 return (
                   <tr
                     key={row.id}
@@ -431,7 +476,7 @@ export function SohTable({
                       <td
                         key={cell.id}
                         className={`px-3 py-2 whitespace-nowrap ${
-                          columnIndex >= 3 && columnIndex <= 7
+                          columnIndex >= 4 && columnIndex <= 8
                             ? "text-right text-zinc-700"
                             : "text-zinc-700"
                         }`}
@@ -448,7 +493,7 @@ export function SohTable({
           {filtered.length > 0 ? (
             <tfoot>
               <tr className="border-t border-zinc-300 bg-zinc-50 font-medium text-zinc-900">
-                <td className="px-3 py-2" colSpan={3}>
+                <td className="px-3 py-2" colSpan={4}>
                   {isFiltered
                     ? `${num.format(filtered.length)} of ${num.format(rows.length)} products (filtered)`
                     : `${num.format(rows.length)} products`}

@@ -37,7 +37,8 @@ const pct = new Intl.NumberFormat("en-IN", {
   signDisplay: "exceptZero",
 });
 
-function Delta({ value, money }: { value: number; money?: boolean }) {
+function Delta({ value, money }: { value: number | null; money?: boolean }) {
+  if (value === null) return <span className="text-zinc-400">—</span>;
   if (value === 0) return <span className="text-zinc-400">0</span>;
   return (
     <span className={value > 0 ? "text-amber-700" : "text-sky-700"}>
@@ -89,13 +90,9 @@ function Section({
 
 export function ProductDrawer({
   row,
-  period,
-  marketplace,
   onClose,
 }: {
   row: SohProductRow | null;
-  period: { from: string; to: string };
-  marketplace: string;
   onClose: () => void;
 }) {
   // Escape closes it. A panel that can only be dismissed with the mouse is a
@@ -140,7 +137,7 @@ export function ProductDrawer({
 
         <Section title="Identity">
           <Row label="EAN" value={row.ean ?? "—"} />
-          <Row label="Marketplace" value={<span className="capitalize">{marketplace}</span>} />
+          <Row label="Marketplace" value={<span className="capitalize">{row.marketplace}</span>} />
           <Row label="Marketplace item ID" value={row.marketplaceItemId ?? "—"} />
           <Row label="ERP item ID" value={
             row.erpItemId ? (
@@ -149,7 +146,15 @@ export function ProductDrawer({
               "—"
             )
           } />
-          <Row label="Reporting period" value={`${period.from} → ${period.to}`} />
+          <Row
+            label="Reporting period"
+            value={
+              row.periodFrom && row.periodTo
+                ? `${row.periodFrom} → ${row.periodTo}`
+                : "—"
+            }
+            hint="this marketplace's own window"
+          />
         </Section>
 
         <div className="h-px bg-zinc-100" />
@@ -191,7 +196,17 @@ export function ProductDrawer({
         <div className="h-px bg-zinc-100" />
 
         <Section title="Quantity" source={`${SELL_IN.source} · ${SELL_OUT.source}`}>
-          <Row label={SELL_IN.label} value={num.format(row.sellIn)} hint="invoiced to the marketplace" />
+          <Row
+            label={SELL_IN.label}
+            value={
+              row.sellIn === null ? (
+                <span className="text-zinc-400">not configured</span>
+              ) : (
+                num.format(row.sellIn)
+              )
+            }
+            hint="invoiced to the marketplace"
+          />
           <Row label={SELL_OUT.label} value={num.format(row.sellOut)} hint="sold to consumers" />
           <Row label="Variance" value={<Delta value={row.quantityVariance} />} hint="sell-out minus sell-in" />
           <Row
@@ -211,7 +226,16 @@ export function ProductDrawer({
         <div className="h-px bg-zinc-100" />
 
         <Section title="Value">
-          <Row label={`${SELL_IN.label} revenue`} value={inr.format(row.sellInRevenue)} />
+          <Row
+            label={`${SELL_IN.label} revenue`}
+            value={
+              row.sellInRevenue === null ? (
+                <span className="text-zinc-400">not configured</span>
+              ) : (
+                inr.format(row.sellInRevenue)
+              )
+            }
+          />
           <Row label={`${SELL_OUT.label} revenue`} value={inr.format(row.sellOutRevenue)} />
           <Row label="Variance" value={<Delta value={row.revenueVariance} money />} />
         </Section>
@@ -221,6 +245,13 @@ export function ProductDrawer({
         <Section title="Status and mapping">
           <Row label="Status" value={SKU_STATUS_LABELS[row.status]} />
           <p className="py-1.5 text-[12px] text-zinc-500">{SKU_STATUS_HINTS[row.status]}</p>
+          {row.erpState !== "reconciled" ? (
+            <p className="py-1.5 text-[12px] text-amber-700">
+              {row.erpState === "notConfigured"
+                ? "ERP reconciliation is not configured for this marketplace, so no sell-in figure exists to compare against."
+                : "The ERP could not be read for this marketplace, so sell-in is missing rather than zero."}
+            </p>
+          ) : null}
           <Row
             label="Mapping"
             value={

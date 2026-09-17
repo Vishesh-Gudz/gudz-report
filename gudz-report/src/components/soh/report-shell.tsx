@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 
 import { ReportActions } from "./report-actions";
+import type { ReportingPeriod } from "@/lib/dates/reporting-period";
 import type { SohProductRow } from "@/lib/report/soh-rows";
 
 /**
@@ -28,16 +29,19 @@ function formatDay(day: string): string {
 export function ReportShell({
   title,
   subtitle,
-  marketplace,
+  marketplaceLabel,
   period,
+  periodsDiffer,
   sourceFileName,
   rows,
   children,
 }: {
   title: string;
   subtitle: string;
-  marketplace: string | null;
-  period: { from: string; to: string };
+  marketplaceLabel: string;
+  /** Null when the sheets cover different windows. */
+  period: ReportingPeriod | null;
+  periodsDiffer: boolean;
   sourceFileName: string | null;
   rows: SohProductRow[];
   children: React.ReactNode;
@@ -65,7 +69,7 @@ export function ReportShell({
                   Marketplace
                 </dt>
                 <dd className="mt-0.5 text-[14px] font-medium text-zinc-900 capitalize">
-                  {marketplace ?? "Not selected"}
+                  {marketplaceLabel}
                 </dd>
               </div>
               <div>
@@ -73,7 +77,17 @@ export function ReportShell({
                   Reporting period
                 </dt>
                 <dd className="mt-0.5 text-[14px] font-medium text-zinc-900">
-                  {formatDay(period.from)} — {formatDay(period.to)}
+                  {period ? (
+                    `${formatDay(period.fromDay)} — ${formatDay(period.toDay)}`
+                  ) : periodsDiffer ? (
+                    // Never a widest-span invented from sheets that each cover
+                    // something narrower; the filter reveals each real window.
+                    <span title="The uploaded sheets cover different windows">
+                      Multiple reporting periods
+                    </span>
+                  ) : (
+                    "—"
+                  )}
                 </dd>
                 {sourceFileName ? (
                   <dd className="mt-0.5 max-w-[16rem] truncate text-[11px] text-zinc-400" title={sourceFileName}>
@@ -85,8 +99,11 @@ export function ReportShell({
 
             <ReportActions
               rows={rows}
-              marketplace={marketplace ?? "marketplace"}
-              period={period}
+              fileLabel={
+                period
+                  ? `${marketplaceLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${period.fromDay}-to-${period.toDay}`
+                  : new Date().toISOString().slice(0, 10)
+              }
               onChangeReport={() => router.push("/?upload=1")}
             />
           </div>

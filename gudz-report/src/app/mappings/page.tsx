@@ -6,8 +6,7 @@ import {
   type ConfirmedMappingDoc,
 } from "@/components/mappings/mapping-resolver";
 import { getConvexClient } from "@/lib/convex/server";
-import { monthPeriod } from "@/lib/dates/reporting-period";
-import { loadMarketplaceReport } from "@/lib/report/marketplace-report";
+import { loadSohReport } from "@/lib/report/soh-report";
 
 export const metadata = { title: "Product mappings · Gudz Report" };
 
@@ -24,8 +23,6 @@ export const metadata = { title: "Product mappings · Gudz Report" };
  */
 export const dynamic = "force-dynamic";
 
-const FALLBACK_PERIOD = monthPeriod("2026-08");
-
 function single(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;
   const trimmed = raw?.trim();
@@ -40,12 +37,21 @@ export default async function MappingsPage({
   const params = await searchParams;
   const importId = single(params.importId) ?? null;
 
-  const report = await loadMarketplaceReport(
-    { importId, marketplace: single(params.marketplace) ?? null },
-    FALLBACK_PERIOD,
-  );
+  const report = await loadSohReport({ importId });
+  const requested = single(params.marketplace) ?? null;
 
-  const marketplace = report.marketplace;
+  // Default to whichever marketplace has the most to decide, since that is the
+  // one a reader arriving from the report's Review button meant.
+  const section =
+    (requested
+      ? report.sections.find((entry) => entry.marketplace === requested)
+      : null) ??
+    [...report.sections]
+      .filter((entry) => entry.status === "completed")
+      .sort((a, b) => b.unresolvedProducts - a.unresolvedProducts)[0] ??
+    null;
+
+  const marketplace = section?.marketplace ?? null;
 
   let confirmed: ConfirmedMappingDoc[] = [];
   let confirmedError: string | null = null;
@@ -62,9 +68,7 @@ export default async function MappingsPage({
     }
   }
 
-  const backToReport = importId
-    ? `/dashboard?importId=${importId}`
-    : "/dashboard";
+  const backToReport = importId ? `/?importId=${importId}` : "/";
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-8">
@@ -87,22 +91,14 @@ export default async function MappingsPage({
 
       <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
         <Tile label="Marketplace" value={marketplace ?? "not selected"} capitalize />
-        <Tile label="Report" value={report.excel.fileName ?? "none loaded"} />
+        <Tile label="Workbook" value={report.fileName ?? "none loaded"} />
         <Tile
-          label="Rows needing a decision"
-          value={
-            report.excel.mapping
-              ? (report.excel.mapping.unmapped + report.excel.mapping.ambiguous).toLocaleString("en-IN")
-              : "—"
-          }
+          label="Products needing a decision"
+          value={(section?.unresolvedRows.length ?? 0).toLocaleString("en-IN")}
         />
         <Tile
           label="Units not reconciled"
-          value={
-            report.excel.mapping
-              ? report.excel.mapping.unmappedQuantity.toLocaleString("en-IN")
-              : "—"
-          }
+          value={(section?.mapping?.unmappedQuantity ?? 0).toLocaleString("en-IN")}
         />
       </dl>
 
@@ -125,20 +121,46 @@ export default async function MappingsPage({
 
       {marketplace === null ? (
         <p className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm dark:border-zinc-800 dark:bg-zinc-900">
-          No marketplace is selected, so there is nothing to map against. Pick an
-          import on the{" "}
-          <Link href="/dashboard" className="underline underline-offset-4">
+          No marketplace is selected, so there is nothing to map against. Upload a
+          workbook on the{" "}
+          <Link href="/" className="underline underline-offset-4">
             report
           </Link>{" "}
           first — a mapping belongs to one marketplace, since the same EAN can be
           listed by several.
         </p>
       ) : (
-        <MappingResolver
-          marketplace={marketplace}
-          rows={report.unmappedRows}
-          confirmed={confirmed}
-        />
+        <>
+          {report.sections.filter((entry) => entry.status === "completed").length > 1 ? (
+            <nav className="flex flex-wrap items-center gap-1.5 text-sm">
+              <span className="text-zinc-500">Marketplace:</span>
+              {report.sections
+                .filter((entry) => entry.status === "completed")
+                .map((entry) => (
+                  <Link
+                    key={entry.marketplace}
+                    href={`/mappings?marketplace=${entry.marketplace}${importId ? `&importId=${importId}` : ""}`}
+                    className={`rounded border px-2 py-1 text-[13px] capitalize ${
+                      entry.marketplace === marketplace
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-200 hover:bg-zinc-50"
+                    }`}
+                  >
+                    {entry.marketplace}
+                    <span className="ml-1.5 opacity-70">
+                      {entry.unresolvedRows.length}
+                    </span>
+                  </Link>
+                ))}
+            </nav>
+          ) : null}
+
+          <MappingResolver
+            marketplace={marketplace}
+            rows={section?.unresolvedRows ?? []}
+            confirmed={confirmed}
+          />
+        </>
       )}
     </main>
   );

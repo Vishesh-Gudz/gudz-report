@@ -1,27 +1,27 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowUpRight, Check, Minus } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Check, Minus, XCircle } from "lucide-react";
 
-import type { MarketplaceReport } from "@/lib/report/marketplace-report";
+import type { SohReport } from "@/lib/report/soh-report";
+import type { SohTotals } from "@/lib/report/soh-rows";
 
 /**
  * What the report does and does not know, stated before anyone has to ask.
  *
- * This section is why the numbers above it can be quoted. Two things get said
- * plainly here that a dashboard is normally tempted to bury:
+ * Three things get said plainly here that a dashboard is normally tempted to
+ * bury:
  *
- *  - how much of the marketplace report reached an ERP product, because the
+ *  - how much of each marketplace report reached an ERP product, because the
  *    unmapped share is counted in sell-out but has no sell-in to compare to;
+ *  - which marketplaces have no ERP customer configured at all, so their
+ *    sell-in column is absent rather than zero;
  *  - that **historical** stock is unavailable. Opening and closing SOH would
  *    have to be replayed from a stock ledger with a known sync backlog, and a
- *    figure like that looks authoritative precisely when it is wrong. An empty
- *    column would invite a reader to assume zero; this says the words instead.
- *
- * The live stock position is real and is labelled as live, not as period-end.
+ *    figure like that looks authoritative precisely when it is wrong.
  */
 
 const num = new Intl.NumberFormat("en-IN");
 
-type State = "ok" | "warn" | "absent";
+type State = "ok" | "warn" | "absent" | "bad";
 
 function Line({
   state,
@@ -34,13 +34,16 @@ function Line({
   detail: string;
   action?: { href: string; label: string };
 }) {
-  const Icon = state === "ok" ? Check : state === "warn" ? AlertTriangle : Minus;
+  const Icon =
+    state === "ok" ? Check : state === "bad" ? XCircle : state === "warn" ? AlertTriangle : Minus;
   const tone =
     state === "ok"
       ? "text-emerald-600"
-      : state === "warn"
-        ? "text-amber-600"
-        : "text-zinc-400";
+      : state === "bad"
+        ? "text-red-600"
+        : state === "warn"
+          ? "text-amber-600"
+          : "text-zinc-400";
 
   return (
     <li className="flex gap-3 border-b border-zinc-100 px-5 py-3 last:border-0">
@@ -64,19 +67,32 @@ function Line({
 
 export function DataQualityPanel({
   report,
-  importId,
+  totals,
 }: {
-  report: MarketplaceReport;
-  importId: string | null;
+  report: SohReport;
+  totals: SohTotals;
 }) {
-  const mapping = report.excel.mapping;
-  const total = mapping?.distinctProducts ?? 0;
-  // The same count the review screen lists, so the two can never disagree.
-  const needsReview = report.unmappedRows.length;
-  const mapped = Math.max(0, total - needsReview);
+  const failed = report.sections.filter((section) => section.status === "failed");
+  const notConfigured = report.sections.filter(
+    (section) => section.status === "completed" && section.erpState === "notConfigured",
+  );
+  const unavailable = report.sections.filter(
+    (section) => section.status === "completed" && section.erpState === "unavailable",
+  );
+  const reconciled = report.sections.filter(
+    (section) => section.erpState === "reconciled",
+  );
 
-  const mappingsHref = report.marketplace
-    ? `/mappings?marketplace=${report.marketplace}${importId ? `&importId=${importId}` : ""}`
+  const totalProducts = totals.mappedProducts + totals.unresolvedProducts;
+
+  // Review the marketplace with the most unresolved products first — it is the
+  // one where a decision moves the report most.
+  const worst = [...report.sections]
+    .filter((section) => section.unresolvedProducts > 0)
+    .sort((a, b) => b.unresolvedProducts - a.unresolvedProducts)[0];
+
+  const mappingsHref = worst
+    ? `/mappings?marketplace=${worst.marketplace}${report.importId ? `&importId=${report.importId}` : ""}`
     : "/mappings";
 
   return (
@@ -89,65 +105,101 @@ export function DataQualityPanel({
       </header>
 
       <ul>
-        <Line
-          state={needsReview === 0 ? "ok" : "warn"}
-          title={
-            total > 0
-              ? `${num.format(mapped)} of ${num.format(total)} products matched to an ERP product`
-              : "No marketplace report loaded"
-          }
-          detail={
-            total === 0
-              ? "Upload a marketplace report to compare it against ERP sales."
-              : needsReview === 0
-                ? "Every product in the uploaded report reached an ERP product, so every row has both sides."
-                : `${num.format(needsReview)} product${needsReview === 1 ? "" : "s"} could not be matched automatically — usually several ERP records for the same item differing only by pack size. Their sales are still counted, but they have no sell-in to compare against.`
-          }
-          action={needsReview > 0 ? { href: mappingsHref, label: "Review" } : undefined}
-        />
-
-        {mapping && mapping.unmappedQuantity > 0 ? (
+        {failed.length > 0 ? (
           <Line
-            state="warn"
-            title={`${num.format(mapping.unmappedQuantity)} units not comparable`}
-            detail="Counted in sell-out because the marketplace reported them, but not attributable to an ERP product until the products above are matched."
+            state="bad"
+            title={`${num.format(failed.length)} sheet${failed.length === 1 ? "" : "s"} could not be read`}
+            detail={failed
+              .map((section) => `${section.marketplace}: ${section.error}`)
+              .join(" · ")}
           />
         ) : null}
 
         <Line
-          state={report.erpAvailable ? "ok" : "warn"}
+          state={totals.unresolvedProducts === 0 ? "ok" : "warn"}
           title={
-            report.erpAvailable
-              ? "ERP sales data available for this period"
-              : "ERP sales data unavailable"
+            totalProducts > 0
+              ? `${num.format(totals.mappedProducts)} of ${num.format(totalProducts)} products matched to an ERP product`
+              : "No marketplace report loaded"
           }
           detail={
-            report.erpAvailable
-              ? `${num.format(report.erp.orders)} order${report.erp.orders === 1 ? "" : "s"} and ${num.format(report.erp.lines)} line${report.erp.lines === 1 ? "" : "s"} read for ${report.period.fromDay} → ${report.period.toDay}. Draft and cancelled orders are excluded.`
-              : "Sell-in figures are missing from this report. This is a connection problem, not an absence of sales."
+            totalProducts === 0
+              ? "Upload a marketplace report to compare it against ERP sales."
+              : totals.unresolvedProducts === 0
+                ? "Every product in this upload reached an ERP product."
+                : `${num.format(totals.unresolvedProducts)} product${totals.unresolvedProducts === 1 ? "" : "s"} could not be matched automatically — usually several ERP records for the same item differing only by pack size. Their sales are still counted, but they have no sell-in to compare against.`
+          }
+          action={
+            totals.unresolvedProducts > 0
+              ? { href: mappingsHref, label: "Review" }
+              : undefined
           }
         />
 
         <Line
-          state={report.stockAvailability.currentAvailable ? "ok" : "warn"}
+          state={reconciled.length > 0 ? "ok" : "warn"}
           title={
-            report.stockAvailability.currentAvailable
-              ? `Live stock position available for ${num.format(report.stockAvailability.productsWithPosition)} products`
+            reconciled.length > 0
+              ? `ERP sell-in read for ${reconciled.map((section) => section.marketplace).join(", ")}`
+              : "No marketplace has ERP reconciliation configured"
+          }
+          detail={
+            reconciled.length > 0
+              ? `${num.format(reconciled.reduce((total, section) => total + section.erpOrders, 0))} orders and ${num.format(reconciled.reduce((total, section) => total + section.erpLines, 0))} lines, each read for its own marketplace's reporting period. Draft and cancelled orders are excluded.`
+              : "Sell-out is shown from the uploaded reports, but there is nothing to compare it against until a customer GSTIN is configured for at least one marketplace."
+          }
+        />
+
+        {notConfigured.length > 0 ? (
+          <Line
+            state="absent"
+            title={`ERP reconciliation not configured for ${notConfigured.map((section) => section.marketplace).join(", ")}`}
+            detail="These reports are parsed and their sell-out is counted, but no ERP customer is configured for them, so their sell-in column is absent rather than zero. Configuring the marketplace's customer GSTIN enables it."
+          />
+        ) : null}
+
+        {unavailable.length > 0 ? (
+          <Line
+            state="warn"
+            title={`ERP unavailable for ${unavailable.map((section) => section.marketplace).join(", ")}`}
+            detail={
+              unavailable
+                .map((section) => section.erpMessage)
+                .filter(Boolean)
+                .join(" · ") ||
+              "Configured, but the ERP could not be read. Sell-in is missing rather than zero."
+            }
+          />
+        ) : null}
+
+        <Line
+          state={report.stockAvailable ? "ok" : "warn"}
+          title={
+            report.stockAvailable
+              ? `Live stock position available for ${num.format(totals.stockProducts)} products`
               : "Live stock position unavailable"
           }
           detail={
-            report.stockAvailability.currentAvailable
-              ? `${num.format(report.stockAvailability.totalAvailable)} units available across Healthy Master's own locations, after deducting stock blocked by open orders. Read live, not as at the end of the period.`
-              : (report.stockAvailability.currentError ??
+            report.stockAvailable
+              ? `${num.format(totals.stockAvailable)} units available across Healthy Master's own locations, after deducting stock blocked by open orders. Read live, not as at the end of any reporting period.`
+              : (report.stockError ??
                 "The ERP stock position could not be read for these products.")
           }
         />
+
+        {report.periodsDiffer ? (
+          <Line
+            state="absent"
+            title="Multiple reporting periods"
+            detail="The uploaded sheets cover different windows, so there is no single period for this report. Each marketplace was reconciled against its own dates; filter by marketplace to see them."
+          />
+        ) : null}
 
         {/* Said out loud rather than shown as an empty column. */}
         <Line
           state="absent"
           title="Historical stock on hand unavailable"
-          detail={report.stockAvailability.historyReason}
+          detail={report.historyReason}
         />
       </ul>
     </section>

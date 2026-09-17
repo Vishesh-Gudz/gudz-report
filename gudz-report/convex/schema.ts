@@ -58,6 +58,43 @@ export default defineSchema({
     .index("by_uploadedAt", ["uploadedAt"]),
 
   /**
+   * One marketplace sheet's result within an upload.
+   *
+   * An upload is a session, not a sheet: the workbook holds a `Master` mapping
+   * table plus six marketplace sheets, and asking somebody to upload the same
+   * ten-megabyte file once per marketplace was never the right shape.
+   *
+   * Each sheet records its own period, because they genuinely differ — Blinkit
+   * runs June to August and Bigbasket to September in the same file. Collapsing
+   * them into one range would query the ERP for a window neither sheet covers.
+   *
+   * A sheet that failed to parse is stored as `failed` with its reason rather
+   * than dropped. One bad sheet must not take the other five with it, and a
+   * sheet that silently vanished is indistinguishable from one the workbook
+   * never had.
+   */
+  importSheets: defineTable({
+    importId: v.id("imports"),
+    marketplace: v.string(),
+    sheetName: v.string(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    minDate: v.union(v.string(), v.null()),
+    maxDate: v.union(v.string(), v.null()),
+    totalRows: v.number(),
+    validRows: v.number(),
+    invalidRows: v.number(),
+    /** How many rows reached an EAN, and by which route. */
+    identifiersFromSheet: v.number(),
+    identifiersFromMaster: v.number(),
+    identifiersUnresolved: v.number(),
+    /** Set only when `status` is `failed`. Never contains a credential. */
+    errorMessage: v.union(v.string(), v.null()),
+    processedAt: v.number(),
+  })
+    .index("by_importId", ["importId"])
+    .index("by_importId_marketplace", ["importId", "marketplace"]),
+
+  /**
    * Normalized marketplace lines.
    *
    * Every field but `importId` and `sourceRow` is nullable: real exports omit
@@ -67,6 +104,17 @@ export default defineSchema({
    */
   excelRows: defineTable({
     importId: v.id("imports"),
+    /**
+     * Which marketplace this row came from.
+     *
+     * One upload now covers every marketplace sheet in the workbook, so the
+     * import alone no longer says where a row came from — and a row that loses
+     * its marketplace is a row that can be summed into the wrong total. Optional
+     * only because rows written before multi-sheet imports existed have no
+     * answer; every new row carries one.
+     */
+    marketplace: v.optional(v.string()),
+    sheetName: v.optional(v.string()),
     sourceRow: v.number(),
     /** `YYYY-MM-DD`, UTC. The axis the reporting period is derived from. */
     orderDate: v.union(v.string(), v.null()),
@@ -88,6 +136,9 @@ export default defineSchema({
     ),
   })
     .index("by_importId", ["importId"])
+    // Rows are read per marketplace, because the report treats each as its own
+    // dataset with its own period and its own ERP counterpart.
+    .index("by_importId_marketplace", ["importId", "marketplace"])
     // Compound rather than bare: every read of a row is scoped to its import,
     // so a lone `orderDate` index would scan across every file ever uploaded.
     .index("by_importId_orderDate", ["importId", "orderDate"])

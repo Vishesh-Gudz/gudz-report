@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Loader2, Search, Trash2, X } from "lucide-react";
 
-import type { UnmappedReportRow } from "@/lib/report/marketplace-report";
+import type { UnresolvedProduct } from "@/lib/report/soh-report";
 
 /**
  * Resolving products a person has to decide on.
@@ -59,7 +59,7 @@ export function MappingResolver({
   confirmed,
 }: {
   marketplace: string;
-  rows: UnmappedReportRow[];
+  rows: UnresolvedProduct[];
   confirmed: ConfirmedMappingDoc[];
 }) {
   const router = useRouter();
@@ -240,7 +240,7 @@ function ResolveForm({
   onError,
 }: {
   marketplace: string;
-  row: UnmappedReportRow;
+  row: UnresolvedProduct;
   onSaved: () => void;
   onError: (message: string) => void;
 }) {
