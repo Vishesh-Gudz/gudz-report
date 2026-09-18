@@ -60,6 +60,8 @@ export default defineSchema({
       salesValue: v.number(),
       currentSoh: v.union(v.number(), v.null()),
       grnQuantity: v.union(v.number(), v.null()),
+      /** Optional: snapshots saved before Dispatch existed carry no total. */
+      dispatchQuantity: v.optional(v.union(v.number(), v.null())),
       mappedProducts: v.number(),
       unresolvedProducts: v.number(),
     }),
@@ -136,6 +138,12 @@ export default defineSchema({
     erpItemId: v.union(v.string(), v.null()),
     /** Live ERP position at the time the snapshot was built. Not historical. */
     currentSoh: v.union(v.number(), v.null()),
+    /**
+     * Goods sent. Optional because snapshots written before this column existed
+     * do not carry it, and they stay readable — a missing value renders as an
+     * em dash, exactly like a null one.
+     */
+    dispatch: v.optional(v.union(v.number(), v.null())),
     /** From customer_grn. Null means no GRN was raised, not a recorded zero. */
     grn: v.union(v.number(), v.null()),
     salesQuantity: v.number(),

@@ -19,6 +19,12 @@ export interface SnapshotRow {
   readonly erpItemId: string | null;
   /** Null renders as an em dash. Zero would be a recorded zero. */
   readonly currentSoh: number | null;
+  /**
+   * Goods sent. Optional as well as nullable: a snapshot saved before this
+   * column existed carries no field at all, and it reads as an em dash rather
+   * than breaking the row.
+   */
+  readonly dispatch?: number | null;
   readonly grn: number | null;
   readonly salesQuantity: number;
   readonly salesValue: number;
@@ -57,6 +63,8 @@ export interface SnapshotSummary {
   readonly salesValue: number;
   readonly currentSoh: number | null;
   readonly grnQuantity: number | null;
+  /** Absent on snapshots saved before Dispatch existed. */
+  readonly dispatchQuantity?: number | null;
   readonly mappedProducts: number;
   readonly unresolvedProducts: number;
 }
@@ -95,6 +103,7 @@ export interface ViewTotals {
   readonly salesValue: number;
   /** Null when no row carried a figure — an em dash, not a zero. */
   readonly currentSoh: number | null;
+  readonly dispatch: number | null;
   readonly grn: number | null;
   readonly damage: number;
   readonly returned: number;
@@ -114,6 +123,7 @@ export function totalsFor(rows: ReadonlyArray<SnapshotRow>): ViewTotals {
   const unresolved = new Set<string>();
 
   let currentSoh: number | null = null;
+  let dispatch: number | null = null;
   let grn: number | null = null;
   let salesQuantity = 0;
   let salesValue = 0;
@@ -127,6 +137,9 @@ export function totalsFor(rows: ReadonlyArray<SnapshotRow>): ViewTotals {
     if (row.erpItemId && row.currentSoh !== null && !stockSeen.has(row.erpItemId)) {
       stockSeen.add(row.erpItemId);
       currentSoh = (currentSoh ?? 0) + row.currentSoh;
+    }
+    if (row.dispatch !== null && row.dispatch !== undefined) {
+      dispatch = (dispatch ?? 0) + row.dispatch;
     }
     if (row.grn !== null) grn = (grn ?? 0) + row.grn;
 
@@ -143,6 +156,7 @@ export function totalsFor(rows: ReadonlyArray<SnapshotRow>): ViewTotals {
     salesQuantity,
     salesValue,
     currentSoh,
+    dispatch,
     grn,
     damage,
     returned,

@@ -117,6 +117,7 @@ export const addRows = mutation({
         marketplaceItemId: v.union(v.string(), v.null()),
         erpItemId: v.union(v.string(), v.null()),
         currentSoh: v.union(v.number(), v.null()),
+        dispatch: v.optional(v.union(v.number(), v.null())),
         grn: v.union(v.number(), v.null()),
         salesQuantity: v.number(),
         salesValue: v.number(),
@@ -153,6 +154,8 @@ export const complete = mutation({
       salesValue: v.number(),
       currentSoh: v.union(v.number(), v.null()),
       grnQuantity: v.union(v.number(), v.null()),
+      /** Optional: snapshots saved before Dispatch existed carry no total. */
+      dispatchQuantity: v.optional(v.union(v.number(), v.null())),
       mappedProducts: v.number(),
       unresolvedProducts: v.number(),
     }),

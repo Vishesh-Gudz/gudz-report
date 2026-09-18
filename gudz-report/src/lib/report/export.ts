@@ -2,6 +2,7 @@ import type { SnapshotRow } from "./snapshot-model";
 import {
   CURRENT_SOH,
   DAMAGE,
+  DISPATCH,
   GRN,
   MAPPING_LABELS,
   RETURNED,
@@ -31,6 +32,7 @@ export const EXPORT_COLUMNS = [
   "EAN",
   "Month",
   CURRENT_SOH.label,
+  DISPATCH.label,
   GRN.label,
   SALES_QUANTITY.label,
   "Sales Value",
@@ -65,6 +67,9 @@ export function exportRow(row: SnapshotRow): ExportCell[] {
     row.ean ?? ABSENT,
     monthLabel(row.month),
     row.currentSoh ?? ABSENT,
+    // Absent as well as null: a snapshot saved before Dispatch existed has no
+    // field here, and it reads as a dash rather than as a zero.
+    row.dispatch ?? ABSENT,
     // Null, not zero: no customer GRN has been raised for this product.
     row.grn ?? ABSENT,
     row.salesQuantity,

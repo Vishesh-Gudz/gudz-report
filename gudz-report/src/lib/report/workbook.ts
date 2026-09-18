@@ -1,6 +1,6 @@
 import type { SnapshotRow, SnapshotView } from "./snapshot-model";
-import { ABSENT, EXPORT_COLUMNS } from "./export";
-import { CURRENT_SOH, GRN, MAPPING_LABELS, SALES_QUANTITY } from "./vocabulary";
+import { ABSENT, EXPORT_COLUMNS, exportRow } from "./export";
+import { CURRENT_SOH, DISPATCH, GRN, SALES_QUANTITY } from "./vocabulary";
 
 /**
  * The downloadable workbook.
@@ -29,18 +29,6 @@ export type ExportScope = "current" | "full";
 const QUANTITY_FORMAT = "#,##0";
 /** Indian digit grouping, which is what every other figure in the app uses. */
 const CURRENCY_FORMAT = '"₹"#,##,##0';
-
-function monthLabel(month: string): string {
-  if (month === "undated") return "Undated";
-  const date = new Date(`${month}-01T00:00:00.000Z`);
-  return Number.isNaN(date.getTime())
-    ? month
-    : date.toLocaleDateString("en-GB", {
-        month: "short",
-        year: "numeric",
-        timeZone: "UTC",
-      });
-}
 
 function dayLabel(day: string | null): string {
   if (!day) return ABSENT;
@@ -128,22 +116,11 @@ function reportSheetRows(
 
   head.push([], [...EXPORT_COLUMNS]);
 
-  for (const row of rows) {
-    head.push([
-      row.marketplace,
-      row.productName,
-      row.sku,
-      row.ean ?? ABSENT,
-      monthLabel(row.month),
-      row.currentSoh ?? ABSENT,
-      row.grn ?? ABSENT,
-      row.salesQuantity,
-      Math.round(row.salesValue),
-      row.damage,
-      row.returned,
-      MAPPING_LABELS[row.mappingStatus],
-    ]);
-  }
+  // Built by `exportRow`, the same function the CSV uses. This block used to
+  // list the cells itself, which is how the workbook silently shipped a header
+  // with a Dispatch column and rows without one — every figure after Current SOH
+  // sat under the wrong heading.
+  for (const row of rows) head.push(exportRow(row));
 
   return head;
 }
@@ -162,6 +139,7 @@ function summarySheetRows(
   const stockSeen = new Set<string>();
   const products = new Set<string>();
   let currentSoh: number | null = null;
+  let dispatch: number | null = null;
   let grn: number | null = null;
   let salesQuantity = 0;
   let salesValue = 0;
@@ -173,6 +151,9 @@ function summarySheetRows(
     if (row.erpItemId && row.currentSoh !== null && !stockSeen.has(row.erpItemId)) {
       stockSeen.add(row.erpItemId);
       currentSoh = (currentSoh ?? 0) + row.currentSoh;
+    }
+    if (row.dispatch !== null && row.dispatch !== undefined) {
+      dispatch = (dispatch ?? 0) + row.dispatch;
     }
     if (row.grn !== null) grn = (grn ?? 0) + row.grn;
     salesQuantity += row.salesQuantity;
@@ -196,6 +177,7 @@ function summarySheetRows(
     ["Products", products.size],
     ["Rows", rows.length],
     [CURRENT_SOH.label, currentSoh ?? ABSENT],
+    [DISPATCH.label, dispatch ?? ABSENT],
     [GRN.label, grn ?? ABSENT],
     [SALES_QUANTITY.label, salesQuantity],
     ["Sales Value", Math.round(salesValue)],
@@ -207,12 +189,20 @@ function summarySheetRows(
   const marketplaces = [...new Set(rows.map((row) => row.marketplace))];
   if (marketplaces.length > 1) {
     out.push([], ["By marketplace"]);
-    out.push(["Marketplace", "Products", CURRENT_SOH.label, GRN.label, SALES_QUANTITY.label]);
+    out.push([
+      "Marketplace",
+      "Products",
+      CURRENT_SOH.label,
+      DISPATCH.label,
+      GRN.label,
+      SALES_QUANTITY.label,
+    ]);
 
     for (const marketplace of marketplaces) {
       const own = rows.filter((row) => row.marketplace === marketplace);
       const seen = new Set<string>();
       let soh: number | null = null;
+      let sent: number | null = null;
       let received: number | null = null;
       let sold = 0;
 
@@ -220,6 +210,9 @@ function summarySheetRows(
         if (row.erpItemId && row.currentSoh !== null && !seen.has(row.erpItemId)) {
           seen.add(row.erpItemId);
           soh = (soh ?? 0) + row.currentSoh;
+        }
+        if (row.dispatch !== null && row.dispatch !== undefined) {
+          sent = (sent ?? 0) + row.dispatch;
         }
         if (row.grn !== null) received = (received ?? 0) + row.grn;
         sold += row.salesQuantity;
@@ -229,6 +222,7 @@ function summarySheetRows(
         marketplace,
         new Set(own.map((row) => row.sku)).size,
         soh ?? ABSENT,
+        sent ?? ABSENT,
         received ?? ABSENT,
         sold,
       ]);
@@ -239,6 +233,10 @@ function summarySheetRows(
     [],
     ["Notes"],
     [CURRENT_SOH.label, "Healthy Master's latest available ERP stock position."],
+    [
+      DISPATCH.label,
+      "Quantity on ERP orders that reached completed in that month. The ERP holds no separate dispatch count, so this is a subset of GRN.",
+    ],
     [GRN.label, "ERP quantity used for this report's GRN field, by month."],
     [SALES_QUANTITY.label, "Quantity reported by the uploaded marketplace report."],
     ["Damage", "Recorded as 0 for this report version."],
@@ -326,6 +324,7 @@ export async function buildWorkbook(
     { wch: 15 }, // EAN
     { wch: 10 }, // Month
     { wch: 12 }, // Current SOH
+    { wch: 11 }, // Dispatch
     { wch: 10 }, // GRN
     { wch: 15 }, // Sales Quantity
     { wch: 14 }, // Sales Value
@@ -346,21 +345,41 @@ export async function buildWorkbook(
 
   // Number formats on the numeric columns, so Excel itself renders the
   // grouping rather than the export baking in a string.
+  // Looked up by name rather than written as literal indices: adding a column
+  // to `EXPORT_COLUMNS` used to silently shift the formatting one cell right.
+  const columnAt = (name: string) => EXPORT_COLUMNS.indexOf(name as never);
+  const quantityColumns = [
+    CURRENT_SOH.label,
+    DISPATCH.label,
+    GRN.label,
+    SALES_QUANTITY.label,
+    "Damage",
+    "Returned",
+  ].map(columnAt);
+  const valueColumn = columnAt("Sales Value");
+
   for (let r = headerRow + 1; r <= lastRow; r += 1) {
-    for (const c of [5, 6, 7, 9, 10]) {
+    for (const c of quantityColumns) {
       const cell = report[XLSX.utils.encode_cell({ r, c })] as
         | { t?: string; z?: string }
         | undefined;
       if (cell && cell.t === "n") cell.z = QUANTITY_FORMAT;
     }
-    const value = report[XLSX.utils.encode_cell({ r, c: 8 })] as
+    const value = report[XLSX.utils.encode_cell({ r, c: valueColumn })] as
       | { t?: string; z?: string }
       | undefined;
     if (value && value.t === "n") value.z = CURRENCY_FORMAT;
   }
 
   const summary = XLSX.utils.aoa_to_sheet(summarySheetRows(snapshot, rows));
-  summary["!cols"] = [{ wch: 22 }, { wch: 52 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+  summary["!cols"] = [
+    { wch: 22 },
+    { wch: 52 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 16 },
+  ];
 
   const quality = XLSX.utils.aoa_to_sheet(dataQualitySheetRows(snapshot));
   quality["!cols"] = [

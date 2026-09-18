@@ -47,6 +47,14 @@ export interface GrnResult {
   readonly customerIds: ReadonlyArray<string>;
   readonly available: boolean;
   readonly error: string | null;
+  /**
+   * The de-duplicated lines these figures were computed from.
+   *
+   * Carried so a second column over the same ERP feed — Dispatch — does not
+   * have to walk ~59 GSTIN paginations again to read a different field off the
+   * same rows. Nothing here participates in the GRN figure above.
+   */
+  readonly sourceLines: ReadonlyArray<SalesOrderLine>;
 }
 
 export function emptyGrnResult(error: string | null = null): GrnResult {
@@ -58,6 +66,7 @@ export function emptyGrnResult(error: string | null = null): GrnResult {
     customerIds: [],
     available: error === null,
     error,
+    sourceLines: [],
   };
 }
 
@@ -89,10 +98,13 @@ export async function fetchGrnFromSalesOrders(
   let totalQuantity = 0;
   let lineCount = 0;
 
+  // Declared out here only so the finished set can be carried on the result —
+  // see `sourceLines`. The GRN figures are built from it exactly as before.
+  const byLineId = new Map<string, SalesOrderLine>();
+
   try {
     // One request per GSTIN: a marketplace's regional entities register
     // separately, and the ERP filters on a single GSTIN at a time.
-    const byLineId = new Map<string, SalesOrderLine>();
     for (const gstin of options.customerGstins) {
       const result = await fetchReportLines(client, {
         period: options.period,
@@ -141,6 +153,7 @@ export async function fetchGrnFromSalesOrders(
       available: false,
       error:
         cause instanceof Error ? cause.message : "The ERP could not be reached.",
+      sourceLines: [],
     };
   }
 
@@ -152,5 +165,6 @@ export async function fetchGrnFromSalesOrders(
     customerIds: [...customerIds],
     available: true,
     error: null,
+    sourceLines: [...byLineId.values()],
   };
 }

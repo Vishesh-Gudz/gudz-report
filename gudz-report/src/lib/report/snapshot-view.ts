@@ -113,6 +113,7 @@ export async function loadSnapshot(snapshotId: string): Promise<SnapshotView | n
       marketplaceItemId: (row.marketplaceItemId as string | null) ?? null,
       erpItemId: (row.erpItemId as string | null) ?? null,
       currentSoh: (row.currentSoh as number | null) ?? null,
+      dispatch: (row.dispatch as number | null | undefined) ?? null,
       grn: (row.grn as number | null) ?? null,
       salesQuantity: Number(row.salesQuantity),
       salesValue: Number(row.salesValue),

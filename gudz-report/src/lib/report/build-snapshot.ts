@@ -8,6 +8,11 @@ import { getErpClient } from "../erp";
 import { getCatalogSnapshot } from "../erp/catalog-cache";
 import { normalizeGstin } from "../erp/gstin";
 import { importMarketplaceSheet } from "../excel/workbook";
+import {
+  aggregateDispatch,
+  emptyDispatchResult,
+  type DispatchResult,
+} from "./dispatch";
 import { emptyGrnResult, fetchGrnFromSalesOrders, type GrnResult } from "./grn";
 import { aggregateMonthly } from "./monthly";
 import {
@@ -113,6 +118,8 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
   let totalUnresolved = 0;
   let anyGrn = false;
   let grnQuantity = 0;
+  let anyDispatch = false;
+  let dispatchQuantity = 0;
 
   // Rows are held until stock is read, because current SOH is a property of the
   // ERP item and only the full set of items is worth one request.
@@ -175,6 +182,7 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       let grn: GrnResult = emptyGrnResult();
       let grnState = "notConfigured";
       let grnMessage: string | null = GRN_NOT_CONFIGURED;
+      let dispatch: DispatchResult = emptyDispatchResult();
 
       if (gstins.length > 0 && period && catalog) {
         send({ type: "sheet", sheet, marketplace, stage: "erp" });
@@ -195,6 +203,11 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           grnMessage = null;
           anyGrn = anyGrn || grn.byItemMonth.size > 0;
           reconciled.push(marketplace);
+
+          // Read off the lines GRN already fetched — a different field on the
+          // same rows, never a second walk of the ERP. GRN is not touched.
+          dispatch = aggregateDispatch(grn.sourceLines);
+          anyDispatch = anyDispatch || dispatch.byItemMonth.size > 0;
         }
       } else if (gstins.length === 0) {
         notConfigured.push(marketplace);
@@ -204,9 +217,12 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
         const month = entry.month ?? "undated";
         const received =
           entry.erpItemId ? grn.byItemMonth.get(`${entry.erpItemId}::${month}`) : undefined;
+        const sent =
+          entry.erpItemId ? dispatch.byItemMonth.get(`${entry.erpItemId}::${month}`) : undefined;
 
         if (entry.erpItemId) erpItemIds.add(entry.erpItemId);
         if (received) grnQuantity += received.quantity;
+        if (sent) dispatchQuantity += sent.quantity;
 
         return {
           marketplace,
@@ -216,6 +232,9 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           ean: entry.ean,
           marketplaceItemId: entry.marketplaceItemId,
           erpItemId: entry.erpItemId,
+          // Null, never zero. A dash says nothing was dispatched for this
+          // product that month; a zero would say a dispatch recorded none.
+          dispatch: sent ? sent.quantity : null,
           // Null, never zero. A dash says nothing was received for this
           // product that month; a zero would say a receipt recorded none.
           grn: received ? received.quantity : null,
@@ -256,6 +275,9 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
         // goods received, which is the one thing it does report.
         grnQuantity += entry.quantity;
 
+        const sent = dispatch.byItemMonth.get(key);
+        if (sent) dispatchQuantity += sent.quantity;
+
         const item = catalog?.itemForSku(entry.itemSku) ?? null;
         grnOnly.push({
           marketplace,
@@ -265,6 +287,7 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           ean: item?.barcode ?? null,
           marketplaceItemId: null,
           erpItemId: entry.itemId,
+          dispatch: sent ? sent.quantity : null,
           grn: entry.quantity,
           salesQuantity: 0,
           salesValue: 0,
@@ -509,6 +532,7 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           salesValue: totalSalesValue,
           currentSoh: currentSohTotal,
           grnQuantity: anyGrn ? grnQuantity : null,
+          dispatchQuantity: anyDispatch ? dispatchQuantity : null,
           mappedProducts: totalMapped,
           unresolvedProducts: totalUnresolved,
         },
@@ -529,6 +553,7 @@ export interface SnapshotRowInput {
   marketplaceItemId: string | null;
   erpItemId: string | null;
   currentSoh: number | null;
+  dispatch: number | null;
   grn: number | null;
   salesQuantity: number;
   salesValue: number;

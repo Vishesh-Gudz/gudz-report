@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { aggregateDispatch } from "@/lib/report/dispatch";
 import { aggregateMonthly } from "@/lib/report/monthly";
 import {
   ABSENT,
@@ -16,6 +17,7 @@ import {
 import { totalsFor, type SnapshotRow } from "@/lib/report/snapshot-model";
 import type { MappedExcelRow } from "@/lib/report/product-mapping";
 import type { NormalizedExcelRow } from "@/types/excel";
+import type { SalesOrderLine } from "@/types/erp";
 
 /**
  * The report's contract with the business.
@@ -38,6 +40,7 @@ function snapshotRow(overrides: Partial<SnapshotRow> = {}): SnapshotRow {
     marketplaceItemId: "10180611",
     erpItemId: "item_1",
     currentSoh: 400,
+    dispatch: null,
     grn: null,
     salesQuantity: 120,
     salesValue: 12_000,
@@ -80,6 +83,43 @@ function mappedRow(row: NormalizedExcelRow, sku = "RAGI-100"): MappedExcelRow {
     },
     key: sku,
     keyIsErpSku: true,
+  };
+}
+
+function erpLine(overrides: Partial<SalesOrderLine> = {}): SalesOrderLine {
+  return {
+    salesOrderId: "so_1",
+    soNumber: "SO-1",
+    referenceNumber: null,
+    orderDate: "2026-06-04",
+    dispatchedAt: null,
+    deliveredAt: null,
+    status: "completed",
+    orderType: "product",
+    channel: null,
+    channelNormalized: null,
+    customerId: "cus_1",
+    customerName: "Blink Commerce",
+    customerCode: null,
+    customerType: null,
+    customerGstin: "29AAFCG9846E1Z7",
+    sourceHubId: null,
+    salesOrderItemId: "line_1",
+    itemId: "item_1",
+    sku: "RAGI-100",
+    name: "Ragi Chips - 100 gm",
+    unit: null,
+    hsnCode: null,
+    orderedQuantity: 20,
+    shippedQuantity: 20,
+    deliveredQuantity: 20,
+    unitPrice: 150,
+    lineTotal: 3_000,
+    taxableValue: null,
+    taxAmount: null,
+    fulfillmentSku: null,
+    fulfillmentQuantity: null,
+    ...overrides,
   };
 }
 
@@ -131,6 +171,7 @@ describe("the exported file", () => {
       "EAN",
       "Month",
       "Current SOH",
+      "Dispatch",
       "GRN",
       "Sales Quantity",
       "Sales Value",
@@ -161,6 +202,24 @@ describe("the exported file", () => {
   test("a real GRN exports as its number", () => {
     const cells = exportRow(snapshotRow({ grn: 4_403 }));
     expect(cells[EXPORT_COLUMNS.indexOf("GRN")]).toBe(4_403);
+  });
+
+  test("an absent dispatch exports as a dash, never as zero", () => {
+    const cells = exportRow(snapshotRow({ dispatch: null }));
+    expect(cells[EXPORT_COLUMNS.indexOf("Dispatch")]).toBe(ABSENT);
+  });
+
+  test("a snapshot saved before Dispatch existed still exports a dash", () => {
+    // The field is absent rather than null on those rows. A blank cell would
+    // read as zero in a spreadsheet, which is the one thing it must not say.
+    const old = snapshotRow();
+    delete (old as { dispatch?: number | null }).dispatch;
+    expect(exportRow(old)[EXPORT_COLUMNS.indexOf("Dispatch")]).toBe(ABSENT);
+  });
+
+  test("a real dispatch exports as its number", () => {
+    const cells = exportRow(snapshotRow({ dispatch: 3_195 }));
+    expect(cells[EXPORT_COLUMNS.indexOf("Dispatch")]).toBe(3_195);
   });
 
   test("absent stock exports as a dash", () => {
@@ -291,5 +350,69 @@ describe("terminology", () => {
     expect(header).toContain("Damage");
     expect(header).toContain("Returned");
     expect(header).not.toMatch(/sell[\s-]?(in|out)/i);
+  });
+});
+
+/**
+ * Dispatch, and what it is allowed to claim.
+ *
+ * The ERP has no independently tracked dispatch quantity — `shippedQuantity` is
+ * a function of order status, which is why `report/dispatch.ts` is a module of
+ * its own rather than a line inside the GRN code. These tests pin the two things
+ * that matter to a reader: a product-month with nothing dispatched shows a dash
+ * rather than a zero, and old snapshots keep working.
+ */
+describe("Dispatch", () => {
+  test("a line with nothing dispatched contributes no entry", () => {
+    const result = aggregateDispatch([
+      erpLine({ salesOrderItemId: "a", shippedQuantity: 0, orderedQuantity: 40 }),
+    ]);
+    expect(result.byItemMonth.size).toBe(0);
+    expect(result.totalQuantity).toBe(0);
+  });
+
+  test("dispatched quantity is summed per item and month", () => {
+    const result = aggregateDispatch([
+      erpLine({ salesOrderItemId: "a", shippedQuantity: 10, orderDate: "2026-06-04" }),
+      erpLine({ salesOrderItemId: "b", shippedQuantity: 15, orderDate: "2026-06-19" }),
+      erpLine({ salesOrderItemId: "c", shippedQuantity: 7, orderDate: "2026-07-02" }),
+    ]);
+    expect(result.byItemMonth.get("item_1::2026-06")?.quantity).toBe(25);
+    expect(result.byItemMonth.get("item_1::2026-07")?.quantity).toBe(7);
+    expect(result.totalQuantity).toBe(32);
+  });
+
+  test("a draft order is not dispatched, whatever the quantity says", () => {
+    const result = aggregateDispatch([
+      erpLine({ salesOrderItemId: "a", shippedQuantity: 99, status: "draft" }),
+    ]);
+    expect(result.totalQuantity).toBe(0);
+  });
+
+  test("a free-text line has nothing to attribute dispatch to", () => {
+    const result = aggregateDispatch([
+      erpLine({ salesOrderItemId: "a", shippedQuantity: 5, itemId: null }),
+    ]);
+    expect(result.byItemMonth.size).toBe(0);
+  });
+
+  test("totals sum dispatch, and read as absent when no row carried one", () => {
+    expect(totalsFor([snapshotRow(), snapshotRow({ id: "b" })]).dispatch).toBeNull();
+    expect(
+      totalsFor([snapshotRow({ dispatch: 120 }), snapshotRow({ id: "b", dispatch: 80 })])
+        .dispatch,
+    ).toBe(200);
+  });
+
+  test("a recorded dispatch of zero is not the same as no dispatch", () => {
+    expect(totalsFor([snapshotRow({ dispatch: 0 })]).dispatch).toBe(0);
+  });
+
+  test("rows saved before Dispatch existed do not break the totals", () => {
+    const old = snapshotRow();
+    delete (old as { dispatch?: number | null }).dispatch;
+    const totals = totalsFor([old, snapshotRow({ id: "b", dispatch: 50 })]);
+    expect(totals.dispatch).toBe(50);
+    expect(totals.salesQuantity).toBe(240);
   });
 });

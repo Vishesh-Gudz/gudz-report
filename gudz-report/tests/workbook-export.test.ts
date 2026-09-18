@@ -28,6 +28,7 @@ function row(overrides: Partial<SnapshotRow> = {}): SnapshotRow {
     marketplaceItemId: "10180611",
     erpItemId: "item_1",
     currentSoh: 7_918,
+    dispatch: 3_195,
     grn: 4_403,
     salesQuantity: 8_776,
     salesValue: 1_448_819,
@@ -136,6 +137,7 @@ describe("workbook structure", () => {
       "EAN",
       "Month",
       "Current SOH",
+      "Dispatch",
       "GRN",
       "Sales Quantity",
       "Sales Value",
@@ -163,35 +165,64 @@ describe("workbook structure", () => {
 });
 
 describe("values match the dashboard", () => {
-  test("numbers are written as numbers, not formatted strings", async () => {
-    const cells = grid(await open(snapshot(), [row()]), "SOH Report");
-    const headerAt = cells.findIndex((line) => line[0] === "Marketplace" && line[1] === "Product");
-    const first = cells[headerAt + 1]!;
+  /**
+   * The first data row, addressed by column name.
+   *
+   * Written this way after a column was inserted mid-table: the assertions were
+   * indexed by number, so every one of them moved to the wrong column at once
+   * and the failures pointed nowhere near the cause.
+   */
+  function firstRow(cells: unknown[][]) {
+    const headerAt = cells.findIndex(
+      (line) => line[0] === "Marketplace" && line[1] === "Product",
+    );
+    const columns = cells[headerAt] as string[];
+    const values = cells[headerAt + 1]!;
+    return (name: string) => values[columns.indexOf(name)];
+  }
 
-    expect(first[5]).toBe(7_918); // Current SOH
-    expect(first[6]).toBe(4_403); // GRN
-    expect(first[7]).toBe(8_776); // Sales Quantity
-    expect(first[9]).toBe(0); // Damage
-    expect(first[10]).toBe(0); // Returned
+  test("numbers are written as numbers, not formatted strings", async () => {
+    const at = firstRow(grid(await open(snapshot(), [row()]), "SOH Report"));
+
+    expect(at("Current SOH")).toBe(7_918);
+    expect(at("Dispatch")).toBe(3_195);
+    expect(at("GRN")).toBe(4_403);
+    expect(at("Sales Quantity")).toBe(8_776);
+    expect(at("Damage")).toBe(0);
+    expect(at("Returned")).toBe(0);
   });
 
   test("an absent figure stays a dash, and a real zero stays zero", async () => {
-    const cells = grid(
-      await open(snapshot(), [row({ grn: null, currentSoh: null, damage: 0 })]),
-      "SOH Report",
+    const at = firstRow(
+      grid(
+        await open(snapshot(), [row({ grn: null, dispatch: null, currentSoh: null, damage: 0 })]),
+        "SOH Report",
+      ),
     );
-    const headerAt = cells.findIndex((line) => line[0] === "Marketplace" && line[1] === "Product");
-    const first = cells[headerAt + 1]!;
 
-    expect(first[5]).toBe(ABSENT);
-    expect(first[6]).toBe(ABSENT);
-    expect(first[9]).toBe(0);
+    expect(at("Current SOH")).toBe(ABSENT);
+    expect(at("Dispatch")).toBe(ABSENT);
+    expect(at("GRN")).toBe(ABSENT);
+    expect(at("Damage")).toBe(0);
+  });
+
+  test("every data row is as wide as the header", async () => {
+    // The workbook once shipped a header with a Dispatch column and rows
+    // without one, which silently slid every later figure one column left.
+    const cells = grid(await open(snapshot(), [row(), row({ id: "b" })]), "SOH Report");
+    const headerAt = cells.findIndex(
+      (line) => line[0] === "Marketplace" && line[1] === "Product",
+    );
+    for (const line of cells.slice(headerAt + 1)) {
+      expect(line).toHaveLength((cells[headerAt] as string[]).length);
+    }
   });
 
   test("status reads as words, not an enum", async () => {
-    const cells = grid(await open(snapshot(), [row({ mappingStatus: "unresolved" })]), "SOH Report");
-    const headerAt = cells.findIndex((line) => line[0] === "Marketplace" && line[1] === "Product");
-    expect(cells[headerAt + 1]![11]).toBe("Needs Review");
+    const at = firstRow(
+      grid(await open(snapshot(), [row({ mappingStatus: "unresolved" })]), "SOH Report"),
+    );
+    expect(at("Status")).toBe("Needs Review");
   });
 
   test("quantities carry an Excel number format", async () => {
@@ -200,8 +231,14 @@ describe("values match the dashboard", () => {
     const cells = grid(book, "SOH Report");
     const headerAt = cells.findIndex((line) => line[0] === "Marketplace" && line[1] === "Product");
 
-    const soh = sheet[XLSX.utils.encode_cell({ r: headerAt + 1, c: 5 })] as { z?: string };
-    const value = sheet[XLSX.utils.encode_cell({ r: headerAt + 1, c: 8 })] as { z?: string };
+    // Located by name: a new column used to shift these two indices silently.
+    const columns = cells[headerAt] as string[];
+    const soh = sheet[
+      XLSX.utils.encode_cell({ r: headerAt + 1, c: columns.indexOf("Current SOH") })
+    ] as { z?: string };
+    const value = sheet[
+      XLSX.utils.encode_cell({ r: headerAt + 1, c: columns.indexOf("Sales Value") })
+    ] as { z?: string };
 
     expect(soh.z).toBe("#,##0");
     expect(value.z).toContain("₹");
@@ -215,6 +252,7 @@ describe("summary sheet", () => {
 
     expect(find("Marketplace")![1]).toBe("blinkit");
     expect(find("Current SOH")![1]).toBe(7_918);
+    expect(find("Dispatch")![1]).toBe(3_195);
     expect(find("GRN")![1]).toBe(4_403);
     expect(find("Sales Quantity")![1]).toBe(8_776);
     expect(find("Damage")![1]).toBe(0);

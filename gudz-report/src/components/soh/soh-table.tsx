@@ -20,6 +20,7 @@ import { totalsFor, type SnapshotRow } from "@/lib/report/snapshot-model";
 import {
   CURRENT_SOH,
   DAMAGE,
+  DISPATCH,
   GRN,
   MAPPING_LABELS,
   RETURNED,
@@ -153,6 +154,15 @@ const columns = helper.columns([
       />
     ),
   }),
+  helper.accessor("dispatch", {
+    header: DISPATCH.label,
+    cell: (info) => (
+      <Figure
+        value={info.getValue() ?? null}
+        title="Nothing was dispatched for this product in this month"
+      />
+    ),
+  }),
   helper.accessor("grn", {
     header: GRN.label,
     cell: (info) => (
@@ -189,7 +199,7 @@ const OPTIONAL_COLUMNS = [
 
 /** Numeric columns, right aligned. */
 const FIRST_NUMERIC = 5;
-const LAST_NUMERIC = 9;
+const LAST_NUMERIC = 10;
 
 export function SohTable({
   rows,
@@ -374,7 +384,7 @@ export function SohTable({
       </div>
 
       <div className="max-h-[calc(100vh-19rem)] min-h-[18rem] overflow-auto bg-white">
-        <table className="w-full min-w-[68rem] border-collapse text-[12.5px]">
+        <table className="w-full min-w-[74rem] border-collapse text-[12.5px]">
           <thead className="sticky-head">
             {table.getHeaderGroups().map((group) => (
               <tr key={group.id}>
@@ -465,6 +475,9 @@ export function SohTable({
                 </td>
                 <td className="px-3 py-1.5 text-right">
                   <Figure value={totals.currentSoh} />
+                </td>
+                <td className="px-3 py-1.5 text-right">
+                  <Figure value={totals.dispatch} />
                 </td>
                 <td className="px-3 py-1.5 text-right">
                   <Figure value={totals.grn} />

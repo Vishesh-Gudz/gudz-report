@@ -8,9 +8,14 @@
  * will be misread when nobody is there to explain it.
  *
  *   **Current SOH**     — Healthy Master's own available stock, right now.
+ *   **Dispatch**        — goods sent, from the quantity on orders that reached
+ *                         completed in that month.
  *   **GRN**             — goods received by the marketplace, taken from the
  *                         quantity invoiced to them in that month.
  *   **Sales Quantity**  — what the marketplace reported selling, that month.
+ *
+ * Read left to right they are the flow: Healthy Master dispatches, the customer
+ * receives, the marketplace sells.
  *
  * Two things this report refuses to claim:
  *
@@ -39,6 +44,13 @@ export const CURRENT_SOH = {
   /** Shown on hover, not on the page. */
   description:
     "Available stock in Healthy Master's own locations now, after blocked stock. Not month-end stock.",
+} as const;
+
+export const DISPATCH = {
+  label: "Dispatch",
+  source: "ERP B2B sales orders",
+  description:
+    "Quantity on orders that reached completed in that month. The ERP tracks no separate dispatch count, so this is a subset of GRN rather than larger than it.",
 } as const;
 
 export const GRN = {

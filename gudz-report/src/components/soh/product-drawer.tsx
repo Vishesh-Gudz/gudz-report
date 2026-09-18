@@ -8,6 +8,7 @@ import { monthLabel } from "./soh-table";
 import {
   CURRENT_SOH,
   DAMAGE,
+  DISPATCH,
   GRN,
   MAPPING_LABELS,
   RETURNED,
@@ -123,6 +124,7 @@ export function ProductDrawer({
 
         <Group>
           <Field label={CURRENT_SOH.label} value={<Figure value={row.currentSoh} />} />
+          <Field label={DISPATCH.label} value={<Figure value={row.dispatch ?? null} />} />
           <Field
             label={GRN.label}
             value={<Figure value={row.grn} />}
@@ -143,6 +145,7 @@ export function ProductDrawer({
               <thead>
                 <tr className="text-[11px] text-zinc-400">
                   <th className="pb-1 text-left font-medium">Month</th>
+                  <th className="pb-1 text-right font-medium">{DISPATCH.label}</th>
                   <th className="pb-1 text-right font-medium">{GRN.label}</th>
                   <th className="pb-1 text-right font-medium">Sales</th>
                   <th className="pb-1 text-right font-medium">Value</th>
@@ -157,6 +160,9 @@ export function ProductDrawer({
                     }`}
                   >
                     <td className="py-1">{monthLabel(entry.month)}</td>
+                    <td className="py-1 text-right">
+                      <Figure value={entry.dispatch ?? null} />
+                    </td>
                     <td className="py-1 text-right">
                       <Figure value={entry.grn} />
                     </td>
