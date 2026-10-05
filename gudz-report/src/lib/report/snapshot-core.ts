@@ -1,13 +1,8 @@
-import "server-only";
-
-import { anyApi } from "convex/server";
-
-import { getConvexClient } from "../convex/server";
 import { reportingPeriodFromDays } from "../dates/reporting-period";
-import { getErpClient } from "../erp";
+import type { ErpClient } from "../erp/client";
 import { getCatalogSnapshot } from "../erp/catalog-cache";
 import { normalizeGstin } from "../erp/gstin";
-import { importMarketplaceSheet } from "../excel/workbook";
+import { rowForRecord, type CompactSheet } from "./compact";
 import {
   aggregateDispatch,
   emptyDispatchResult,
@@ -25,18 +20,22 @@ import { fetchStockPositions, type StockSnapshot } from "./stock";
 import { emptyStockSnapshot } from "./stock";
 
 /**
- * Turning an uploaded workbook into a saved report.
+ * Turning a reduced workbook into a saved report.
  *
- * The shape is snapshot-first and that is the whole design. A workbook is
- * 203,000 rows across six marketplaces; the report those rows produce is a few
- * hundred. Everything here happens in memory — parse, aggregate, map, fetch —
- * and the database sees only the finished aggregate. Writing the raw rows first
- * and aggregating later cost hundreds of round trips for data nothing ever read
- * again.
+ * This is the orchestration that used to live behind the upload API route, with
+ * two things taken out of it: where the rows come from, and where the snapshot
+ * is written. Both are now ports, because the work runs inside a Convex action
+ * rather than a web request — the browser parses the workbook and sends the
+ * reduction, and Convex does the mapping, the ERP reads and the write.
  *
- * Each marketplace is independent. Its own sheet profile, its own reporting
- * period, its own confirmed mappings, its own ERP counterpart if one is
- * configured. A sheet that fails is recorded as failed and the rest continue.
+ * Nothing about what the report MEANS moved. The same mapper, the same monthly
+ * aggregate, the same GRN and dispatch modules, the same stock read, the same
+ * data-quality sentences. The rows arrive pre-reduced instead of pre-parsed,
+ * and `report/compact.ts` explains why that is the same answer.
+ *
+ * Each marketplace is independent. Its own period, its own confirmed mappings,
+ * its own ERP counterpart if one is configured. A sheet that fails is recorded
+ * as failed and the rest continue.
  *
  * Three ERP reads, each for a different question:
  *   - the catalogue, to turn a marketplace product into an ERP item (once);
@@ -46,57 +45,122 @@ import { emptyStockSnapshot } from "./stock";
  * null, and the report renders an em dash.
  */
 
-export type ProgressEvent =
-  | { type: "session"; snapshotId: string | null; sheets: string[] }
-  | { type: "sheet"; sheet: string; stage: string; [key: string]: unknown }
-  | { type: "fatal"; error: string }
-  | { type: "done"; snapshotId: string | null; completed: number; failed: number };
-
-export interface BuildOptions {
-  readonly data: Uint8Array;
-  readonly fileName: string;
-  readonly sheets: string[];
-  readonly year: number | null;
-  readonly send: (event: ProgressEvent) => void;
+export interface SnapshotRowInput {
+  marketplace: string;
+  month: string;
+  productName: string;
+  sku: string;
+  ean: string | null;
+  marketplaceItemId: string | null;
+  erpItemId: string | null;
+  currentSoh: number | null;
+  dispatch: number | null;
+  grn: number | null;
+  salesQuantity: number;
+  salesValue: number;
+  damage: number;
+  returned: number;
+  mappingStatus: string;
+  mappingReason: string;
+  sourceRows: number;
 }
 
-interface DataQualityNote {
+export interface MarketplaceStanding {
+  marketplace: string;
+  sheetName: string;
+  status: "completed" | "failed";
+  errorMessage: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  months: string[];
+  sourceRows: number;
+  products: number;
+  salesQuantity: number;
+  salesValue: number;
+  erpState: string;
+  erpMessage: string | null;
+  grnState: string;
+  grnMessage: string | null;
+  mappedProducts: number;
+  unresolvedProducts: number;
+}
+
+export interface DataQualityNote {
   state: "ok" | "warn" | "absent" | "bad";
   title: string;
   detail: string;
 }
 
+export interface SnapshotSummary {
+  marketplaces: number;
+  products: number;
+  rows: number;
+  salesQuantity: number;
+  salesValue: number;
+  currentSoh: number | null;
+  grnQuantity: number | null;
+  dispatchQuantity: number | null;
+  mappedProducts: number;
+  unresolvedProducts: number;
+}
+
+/**
+ * Everything the orchestration needs from its host.
+ *
+ * Reads and writes rather than a database handle, so the same code runs against
+ * a Convex action's `ctx` and against a test double that holds arrays.
+ */
+export interface SnapshotPorts {
+  readonly addMarketplace: (standing: MarketplaceStanding) => Promise<void>;
+  readonly clearMarketplaceRows: (marketplace: string) => Promise<void>;
+  readonly addRows: (rows: SnapshotRowInput[]) => Promise<void>;
+  readonly complete: (result: {
+    marketplaces: string[];
+    periodStart: string | null;
+    periodEnd: string | null;
+    periodsDiffer: boolean;
+    summary: SnapshotSummary;
+    dataQuality: DataQualityNote[];
+  }) => Promise<void>;
+  readonly fail: (errorMessage: string) => Promise<void>;
+  readonly marketplaceConfig: (marketplace: string) => Promise<{
+    customerGstins: string[];
+    erpChannelProvider?: string | null;
+  } | null>;
+  readonly confirmedMappings: (marketplace: string) => Promise<ConfirmedMapping[]>;
+  /** Progress, for a host that can surface it. Never load-bearing. */
+  readonly progress?: (stage: string, detail: Record<string, unknown>) => void;
+}
+
+export interface BuildFromCompactOptions {
+  readonly sheets: ReadonlyArray<CompactSheet>;
+  readonly erp: ErpClient;
+  readonly ports: SnapshotPorts;
+}
+
+export interface BuildResult {
+  readonly completed: number;
+  readonly failed: number;
+}
+
 const GRN_NOT_CONFIGURED =
   "No ERP customer is configured for this marketplace, so goods received cannot be attributed to it.";
 
-export async function buildSnapshot(options: BuildOptions): Promise<void> {
-  const { data, fileName, sheets, year, send } = options;
-  const convex = getConvexClient();
+/** Rows written per mutation. Keeps a single write well inside Convex's limits. */
+const ROW_BATCH = 400;
 
-  let snapshotId: string | null = null;
-  if (convex) {
-    try {
-      snapshotId = (await convex.mutation(anyApi.snapshots.create as never, {
-        sourceFileName: fileName,
-      } as never)) as string;
-    } catch (cause) {
-      send({
-        type: "fatal",
-        error: `The report could not be saved: ${
-          cause instanceof Error ? cause.message : "unknown error"
-        }`,
-      });
-      return;
-    }
-  }
-
-  send({ type: "session", snapshotId, sheets });
+export async function buildSnapshotFromCompact(
+  options: BuildFromCompactOptions,
+): Promise<BuildResult> {
+  const { sheets, erp, ports } = options;
+  const report = ports.progress ?? (() => {});
 
   // The catalogue is the same for every marketplace, so it is read once.
   let catalog: CatalogIndex | null = null;
   let catalogError: string | null = null;
+  report("catalog", {});
   try {
-    const snapshot = await getCatalogSnapshot(getErpClient());
+    const snapshot = await getCatalogSnapshot(erp);
     catalog = new CatalogIndex(snapshot.items);
   } catch (cause) {
     catalogError =
@@ -133,45 +197,48 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
   /** Marketplaces whose own products reach no ERP item at all. */
   const unmappable: string[] = [];
 
-  for (const sheet of sheets) {
-    send({ type: "sheet", sheet, stage: "parsing" });
+  for (const input of sheets) {
+    const marketplace = input.marketplace;
+    report("sheet", { sheet: input.sheet, marketplace, stage: "mapping" });
 
     try {
-      const parsed = importMarketplaceSheet(data, { sheet, year });
-      const marketplace = parsed.marketplace;
-
       const period =
-        parsed.statistics.minDate && parsed.statistics.maxDate
-          ? reportingPeriodFromDays(parsed.statistics.minDate, parsed.statistics.maxDate)
+        input.minDate && input.maxDate
+          ? reportingPeriodFromDays(input.minDate, input.maxDate)
           : null;
 
-      const config = await readMarketplaceConfig(marketplace);
+      const config = await ports.marketplaceConfig(marketplace);
       const gstins = (config?.customerGstins ?? [])
         .map((value) => normalizeGstin(value))
         .filter((value): value is string => value !== null);
 
-      const confirmed = await readConfirmedMappings(marketplace);
+      const confirmed = await ports.confirmedMappings(marketplace);
       const confirmedSkus = new Set(
         confirmed.map((entry) => entry.erpSku.toUpperCase()),
       );
 
-      send({ type: "sheet", sheet, marketplace, stage: "mapping", rows: parsed.rows.length });
+      // One row per compact record, carrying that record's own row count so the
+      // aggregate keeps reporting spreadsheet rows rather than records.
+      const rowsForMapping = input.records.map(rowForRecord);
+      const sourceRowsByIndex = input.records.map((record) => record.sourceRows);
+      const indexOfRow = new Map(rowsForMapping.map((row, index) => [row, index]));
 
       const mapped = catalog
-        ? mapExcelRows(parsed.rows, catalog, {
+        ? mapExcelRows(rowsForMapping, catalog, {
             channelProvider: config?.erpChannelProvider ?? null,
             confirmed: new ConfirmedMappingIndex(confirmed),
           })
         : null;
 
-      const aggregate = aggregateMonthly(mapped?.rows ?? [], confirmedSkus);
+      const aggregate = aggregateMonthly(
+        mapped?.rows ?? [],
+        confirmedSkus,
+        (entry) => sourceRowsByIndex[indexOfRow.get(entry.row) ?? -1] ?? 1,
+      );
 
       // Not "some products are unresolved" — none of them reached an ERP item.
       // FirstClub is the real case: its FCN codes are absent from `Master`, so
-      // the sheet has no route to an EAN and nothing can be reconciled. Its
-      // sales are still counted and its goods received still land on GRN-only
-      // rows; what is missing is the join between the two, and a reader has to
-      // be told that rather than left to infer it from a column of dashes.
+      // the sheet has no route to an EAN and nothing can be reconciled.
       if (catalog && aggregate.distinctProducts > 0 && aggregate.mappedProducts === 0) {
         unmappable.push(marketplace);
       }
@@ -185,11 +252,8 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       let dispatch: DispatchResult = emptyDispatchResult();
 
       if (gstins.length > 0 && period && catalog) {
-        send({ type: "sheet", sheet, marketplace, stage: "erp" });
-        grn = await fetchGrnFromSalesOrders(getErpClient(), {
-          period,
-          customerGstins: gstins,
-        });
+        report("sheet", { sheet: input.sheet, marketplace, stage: "erp" });
+        grn = await fetchGrnFromSalesOrders(erp, { period, customerGstins: gstins });
 
         if (!grn.available) {
           erpState = "unavailable";
@@ -215,10 +279,12 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
 
       const rows: Omit<SnapshotRowInput, "currentSoh">[] = aggregate.rows.map((entry) => {
         const month = entry.month ?? "undated";
-        const received =
-          entry.erpItemId ? grn.byItemMonth.get(`${entry.erpItemId}::${month}`) : undefined;
-        const sent =
-          entry.erpItemId ? dispatch.byItemMonth.get(`${entry.erpItemId}::${month}`) : undefined;
+        const received = entry.erpItemId
+          ? grn.byItemMonth.get(`${entry.erpItemId}::${month}`)
+          : undefined;
+        const sent = entry.erpItemId
+          ? dispatch.byItemMonth.get(`${entry.erpItemId}::${month}`)
+          : undefined;
 
         if (entry.erpItemId) erpItemIds.add(entry.erpItemId);
         if (received) grnQuantity += received.quantity;
@@ -241,7 +307,6 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           salesQuantity: entry.salesQuantity,
           salesValue: entry.salesValue,
           // Columns the business asked for with no source behind them yet.
-          // Held in the row model so connecting one later changes a writer.
           damage: 0,
           returned: 0,
           mappingStatus: entry.mappingStatus,
@@ -254,9 +319,7 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       //
       // Without these the GRN total silently under-reports: the ERP shipped 41
       // SKUs to Blinkit and the sheet names 16, so two thirds of the goods
-      // received would have no row to sit on. They carry no sales — the
-      // marketplace reported none — and that zero is a real measurement rather
-      // than a gap.
+      // received would have no row to sit on.
       const claimed = new Set(
         aggregate.rows
           .filter((entry) => entry.erpItemId)
@@ -270,9 +333,7 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
         // Deliberately not added to `erpItemIds`, so these rows carry no stock
         // figure. Current SOH answers "what is on hand for the products this
         // marketplace sells", and a product the marketplace never listed is not
-        // one of them — counting its warehouse stock here would inflate the
-        // headline by every item ever invoiced. The row exists to account for
-        // goods received, which is the one thing it does report.
+        // one of them.
         grnQuantity += entry.quantity;
 
         const sent = dispatch.byItemMonth.get(key);
@@ -302,28 +363,25 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
 
       pending.push({ marketplace, rows: [...rows, ...grnOnly] });
 
-      if (convex && snapshotId) {
-        await convex.mutation(anyApi.snapshots.addMarketplace as never, {
-          snapshotId,
-          marketplace,
-          sheetName: parsed.sheet,
-          status: "completed",
-          errorMessage: null,
-          periodStart: period?.fromDay ?? null,
-          periodEnd: period?.toDay ?? null,
-          months: aggregate.months,
-          sourceRows: parsed.rows.length,
-          products: aggregate.distinctProducts,
-          salesQuantity: aggregate.salesQuantity,
-          salesValue: aggregate.salesValue,
-          erpState,
-          erpMessage,
-          grnState,
-          grnMessage,
-          mappedProducts: aggregate.mappedProducts,
-          unresolvedProducts: aggregate.unresolvedProducts,
-        } as never);
-      }
+      await ports.addMarketplace({
+        marketplace,
+        sheetName: input.sheet,
+        status: "completed",
+        errorMessage: null,
+        periodStart: period?.fromDay ?? null,
+        periodEnd: period?.toDay ?? null,
+        months: aggregate.months,
+        sourceRows: input.sourceRowCount,
+        products: aggregate.distinctProducts,
+        salesQuantity: aggregate.salesQuantity,
+        salesValue: aggregate.salesValue,
+        erpState,
+        erpMessage,
+        grnState,
+        grnMessage,
+        mappedProducts: aggregate.mappedProducts,
+        unresolvedProducts: aggregate.unresolvedProducts,
+      });
 
       marketplaceNames.push(marketplace);
       if (period) periods.push({ from: period.fromDay, to: period.toDay });
@@ -335,15 +393,13 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       totalUnresolved += aggregate.unresolvedProducts;
       completed += 1;
 
-      send({
-        type: "sheet",
-        sheet,
+      report("sheet", {
+        sheet: input.sheet,
         marketplace,
         stage: "done",
-        rows: parsed.rows.length,
+        rows: input.sourceRowCount,
         productMonths: rows.length,
         months: aggregate.months,
-        period: period ? { from: period.fromDay, to: period.toDay } : null,
         erpState,
         grnState,
       });
@@ -352,41 +408,39 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       const message =
         cause instanceof Error ? cause.message : "This sheet could not be read.";
 
-      if (convex && snapshotId) {
-        try {
-          await convex.mutation(anyApi.snapshots.addMarketplace as never, {
-            snapshotId,
-            marketplace: sheet.toLowerCase(),
-            sheetName: sheet,
-            status: "failed",
-            errorMessage: message,
-            periodStart: null,
-            periodEnd: null,
-            months: [],
-            sourceRows: 0,
-            products: 0,
-            salesQuantity: 0,
-            salesValue: 0,
-            erpState: "notConfigured",
-            erpMessage: null,
-            grnState: "notConfigured",
-            grnMessage: null,
-            mappedProducts: 0,
-            unresolvedProducts: 0,
-          } as never);
-        } catch {
-          // The stream still reports it, which is what the screen shows.
-        }
+      try {
+        await ports.addMarketplace({
+          marketplace: marketplace || input.sheet.toLowerCase(),
+          sheetName: input.sheet,
+          status: "failed",
+          errorMessage: message,
+          periodStart: null,
+          periodEnd: null,
+          months: [],
+          sourceRows: 0,
+          products: 0,
+          salesQuantity: 0,
+          salesValue: 0,
+          erpState: "notConfigured",
+          erpMessage: null,
+          grnState: "notConfigured",
+          grnMessage: null,
+          mappedProducts: 0,
+          unresolvedProducts: 0,
+        });
+      } catch {
+        // The snapshot still records the failure through `failed` below.
       }
 
-      send({ type: "sheet", sheet, stage: "failed", error: message });
+      report("sheet", { sheet: input.sheet, stage: "failed", error: message });
     }
   }
 
   // ── Current SOH, once, for every ERP item any marketplace named
   let stock: StockSnapshot = emptyStockSnapshot();
   if (catalog && erpItemIds.size > 0) {
-    stock = await fetchStockPositions(getErpClient(), [...erpItemIds]);
+    report("stock", { items: erpItemIds.size });
+    stock = await fetchStockPositions(erp, [...erpItemIds]);
   }
 
   let currentSohTotal: number | null = null;
@@ -398,30 +452,23 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
   }
 
   // ── Write the rows
-  if (convex && snapshotId) {
-    for (const group of pending) {
-      await convex.mutation(anyApi.snapshots.clearMarketplaceRows as never, {
-        snapshotId,
-        marketplace: group.marketplace,
-      } as never);
+  report("rows", { marketplaces: pending.length });
+  for (const group of pending) {
+    await ports.clearMarketplaceRows(group.marketplace);
 
-      const withStock: SnapshotRowInput[] = group.rows.map((row) => ({
-        ...row,
-        // `sourceRows === 0` marks a supplementary GRN-only row: the product was
-        // invoiced to this marketplace but its report never listed it. Those
-        // carry no stock figure — see the note where they are built.
-        currentSoh:
-          row.erpItemId && row.sourceRows > 0
-            ? (stock.byItemId.get(row.erpItemId)?.available ?? null)
-            : null,
-      }));
+    const withStock: SnapshotRowInput[] = group.rows.map((row) => ({
+      ...row,
+      // `sourceRows === 0` marks a supplementary GRN-only row: the product was
+      // invoiced to this marketplace but its report never listed it. Those
+      // carry no stock figure — see the note where they are built.
+      currentSoh:
+        row.erpItemId && row.sourceRows > 0
+          ? (stock.byItemId.get(row.erpItemId)?.available ?? null)
+          : null,
+    }));
 
-      for (let offset = 0; offset < withStock.length; offset += 400) {
-        await convex.mutation(anyApi.snapshots.addRows as never, {
-          snapshotId,
-          rows: withStock.slice(offset, offset + 400),
-        } as never);
-      }
+    for (let offset = 0; offset < withStock.length; offset += ROW_BATCH) {
+      await ports.addRows(withStock.slice(offset, offset + ROW_BATCH));
     }
   }
 
@@ -470,8 +517,7 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
           state: "warn",
           title: "Current SOH unavailable",
           detail:
-            stock.error ??
-            "The ERP stock position could not be read for these products.",
+            stock.error ?? "The ERP stock position could not be read for these products.",
         }
       : {
           state: "ok",
@@ -511,83 +557,29 @@ export async function buildSnapshot(options: BuildOptions): Promise<void> {
       (period) => period.from !== periods[0]!.from || period.to !== periods[0]!.to,
     );
 
-  if (convex && snapshotId) {
-    if (completed === 0) {
-      await convex.mutation(anyApi.snapshots.fail as never, {
-        snapshotId,
-        errorMessage: "No sheet in this workbook could be read.",
-      } as never);
-    } else {
-      await convex.mutation(anyApi.snapshots.complete as never, {
-        snapshotId,
-        marketplaces: marketplaceNames,
-        periodStart: periodsDiffer ? null : (periods[0]?.from ?? null),
-        periodEnd: periodsDiffer ? null : (periods[0]?.to ?? null),
-        periodsDiffer,
-        summary: {
-          marketplaces: marketplaceNames.length,
-          products: totalProducts,
-          rows: totalRows,
-          salesQuantity: totalSalesQuantity,
-          salesValue: totalSalesValue,
-          currentSoh: currentSohTotal,
-          grnQuantity: anyGrn ? grnQuantity : null,
-          dispatchQuantity: anyDispatch ? dispatchQuantity : null,
-          mappedProducts: totalMapped,
-          unresolvedProducts: totalUnresolved,
-        },
-        dataQuality: notes,
-      } as never);
-    }
+  if (completed === 0) {
+    await ports.fail("No sheet in this workbook could be read.");
+  } else {
+    await ports.complete({
+      marketplaces: marketplaceNames,
+      periodStart: periodsDiffer ? null : (periods[0]?.from ?? null),
+      periodEnd: periodsDiffer ? null : (periods[0]?.to ?? null),
+      periodsDiffer,
+      summary: {
+        marketplaces: marketplaceNames.length,
+        products: totalProducts,
+        rows: totalRows,
+        salesQuantity: totalSalesQuantity,
+        salesValue: totalSalesValue,
+        currentSoh: currentSohTotal,
+        grnQuantity: anyGrn ? grnQuantity : null,
+        dispatchQuantity: anyDispatch ? dispatchQuantity : null,
+        mappedProducts: totalMapped,
+        unresolvedProducts: totalUnresolved,
+      },
+      dataQuality: notes,
+    });
   }
 
-  send({ type: "done", snapshotId, completed, failed });
-}
-
-export interface SnapshotRowInput {
-  marketplace: string;
-  month: string;
-  productName: string;
-  sku: string;
-  ean: string | null;
-  marketplaceItemId: string | null;
-  erpItemId: string | null;
-  currentSoh: number | null;
-  dispatch: number | null;
-  grn: number | null;
-  salesQuantity: number;
-  salesValue: number;
-  damage: number;
-  returned: number;
-  mappingStatus: string;
-  mappingReason: string;
-  sourceRows: number;
-}
-
-async function readMarketplaceConfig(marketplace: string): Promise<{
-  customerGstins: string[];
-  erpChannelProvider?: string | null;
-} | null> {
-  const convex = getConvexClient();
-  if (!convex) return null;
-  try {
-    const doc = (await convex.query(anyApi.marketplaces.getByName as never, {
-      marketplace,
-    } as never)) as { customerGstins: string[]; erpChannelProvider?: string | null } | null;
-    return doc;
-  } catch {
-    return null;
-  }
-}
-
-async function readConfirmedMappings(marketplace: string): Promise<ConfirmedMapping[]> {
-  const convex = getConvexClient();
-  if (!convex) return [];
-  try {
-    return (await convex.query(anyApi.productMappings.listForMarketplace as never, {
-      marketplace,
-    } as never)) as ConfirmedMapping[];
-  } catch {
-    return [];
-  }
+  return { completed, failed };
 }

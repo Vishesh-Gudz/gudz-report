@@ -1,4 +1,10 @@
-import "server-only";
+/**
+ * No `server-only` guard, deliberately: this module takes its `ErpClient` as an
+ * argument and never reads a credential, so it is safe in any server runtime —
+ * including a Convex Node action, which cannot resolve that package. The guard
+ * stays on `lib/config.ts` and `lib/erp/index.ts`, which are the only modules
+ * that read the key.
+ */
 
 import type { CatalogItem } from "../../types/erp";
 import { getAllCatalogItems } from "./catalog";

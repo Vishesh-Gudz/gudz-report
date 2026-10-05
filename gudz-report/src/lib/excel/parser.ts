@@ -55,10 +55,24 @@ export function inspectWorkbook(data: ArrayBuffer | Uint8Array): ParsedSheet[] {
   return workbook.SheetNames.map((name) => toSheetSummary(workbook, name));
 }
 
-function readWorkbook(data: ArrayBuffer | Uint8Array): XLSX.WorkBook {
+/**
+ * Reads a workbook, optionally materialising only the sheets named.
+ *
+ * The limit is the difference between a usable import and an unusable one. A
+ * real export is seven sheets and 204,000 rows; reading all of them to get at
+ * one costs seconds and hundreds of megabytes, and an import that reads six
+ * marketplaces used to pay that price twelve times over — once per sheet, plus
+ * once per Master lookup. Naming the sheet turns the whole import from minutes
+ * into the time its own rows actually take.
+ */
+function readWorkbook(
+  data: ArrayBuffer | Uint8Array,
+  only?: ReadonlyArray<string>,
+): XLSX.WorkBook {
   try {
     return XLSX.read(data, {
       type: "array",
+      ...(only && only.length > 0 ? { sheets: [...only] } : {}),
       // `cellDates` is deliberately OFF. See the note at the top of this file:
       // it converts through the local timezone and loses a day.
       cellDates: false,
@@ -83,13 +97,22 @@ export function parseWorkbook(
   data: ArrayBuffer | Uint8Array,
   options?: ParseOptions,
 ): ParsedWorkbook {
-  const workbook = readWorkbook(data);
+  const workbook = readWorkbook(
+    data,
+    options?.sheetName ? [options.sheetName] : undefined,
+  );
 
   if (workbook.SheetNames.length === 0) {
     throw new ExcelParseError("The workbook contains no sheets.");
   }
 
-  const sheets = workbook.SheetNames.map((name) => toSheetSummary(workbook, name));
+  // Only the sheets actually materialised can be summarised. When one was
+  // named, the others were never parsed — summarising them would mean reading
+  // the whole workbook again, which is the cost this avoids.
+  const summarised = options?.sheetName
+    ? workbook.SheetNames.filter((name) => name === options.sheetName)
+    : workbook.SheetNames;
+  const sheets = summarised.map((name) => toSheetSummary(workbook, name));
 
   const selectedSheet =
     options?.sheetName ??

@@ -19,7 +19,7 @@ import { isReportableStatus, reportedQuantity } from "./policy";
  * The report uses (1) because a column nobody can populate is not a report.
  * The two are deliberately kept behind the same shape — a map keyed
  * `itemId::YYYY-MM` — so swapping to the customer register later is a change of
- * one call in `build-snapshot.ts` and nothing else.
+ * one call in `snapshot-core.ts` and nothing else.
  *
  * What this is not: a claim that the marketplace received these units. It is
  * what was invoiced to them in that month. Where the two eventually differ, the

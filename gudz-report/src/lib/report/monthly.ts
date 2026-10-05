@@ -66,9 +66,22 @@ function identityOf(entry: MappedExcelRow): string {
   return (own ?? entry.row.productName ?? "(unidentified)").toUpperCase();
 }
 
+/**
+ * How many spreadsheet rows one mapped entry stands for.
+ *
+ * One, for a row read straight from a sheet. More when the browser reduced the
+ * sheet to product-months before sending it — see `report/compact.ts`. Reading
+ * it through a function keeps the count honest on both paths without either
+ * caller knowing about the other.
+ */
+export type SourceRowsOf = (entry: MappedExcelRow) => number;
+
+const ONE_ROW: SourceRowsOf = () => 1;
+
 export function aggregateMonthly(
   rows: ReadonlyArray<MappedExcelRow>,
   confirmedErpSkus: ReadonlySet<string>,
+  sourceRowsOf: SourceRowsOf = ONE_ROW,
 ): MonthlyAggregate {
   const buckets = new Map<
     string,
@@ -123,7 +136,7 @@ export function aggregateMonthly(
     if (existing) {
       existing.salesQuantity += quantity;
       existing.salesValue += value;
-      existing.sourceRows += 1;
+      existing.sourceRows += sourceRowsOf(entry);
       continue;
     }
 
@@ -141,7 +154,7 @@ export function aggregateMonthly(
       mappingReason: entry.mapping.reason,
       salesQuantity: quantity,
       salesValue: value,
-      sourceRows: 1,
+      sourceRows: sourceRowsOf(entry),
     });
   }
 

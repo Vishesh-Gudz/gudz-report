@@ -4,15 +4,27 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Check, FileSpreadsheet, Loader2, Upload, XCircle } from "lucide-react";
 
+import { getBrowserConvexClient } from "@/lib/convex/browser";
+import type { CompactSheet } from "@/lib/report/compact";
+import type { WorkerResponse } from "@/lib/excel/import-worker";
+
 /**
  * Uploading a marketplace workbook.
  *
- * One workbook, one import, however many marketplaces are in it. The file is
- * sent once and the server streams its progress back as newline-delimited JSON,
- * so each marketplace is marked done when its own parse and save have actually
- * finished. No percentages: the work is genuinely uneven — Blinkit is 8,451 rows
- * and Swiggy is 103,397 — and a bar moving on a timer would be a lie about how
- * far along it is.
+ * The workbook never leaves the browser. A Web Worker parses the sheets that
+ * were picked and reduces them to product-months — 203,000 rows become a few
+ * hundred records — and only that reduction is sent to Convex, which does the
+ * mapping, the ERP reads and the write.
+ *
+ * It is built this way because the file cannot go anywhere else. A Vercel
+ * function refuses a request body over 4.5 MB and a real export is ten; a Convex
+ * Node action runs out of its 512 MB ceiling parsing it. The browser is the one
+ * machine in the chain with no limit that this file exceeds — and the worker is
+ * what keeps a minute of parsing from freezing the tab.
+ *
+ * Progress is per sheet and real. No percentages: the work is genuinely uneven —
+ * Blinkit is 8,451 rows and Swiggy is 103,397 — and a bar moving on a timer
+ * would be a lie about how far along it is.
  *
  * `Master` is never offered. It is the product mapping table, loaded once by the
  * parser and used for every sheet, and it is not sales data.
@@ -30,18 +42,58 @@ interface SheetOption {
 }
 
 interface InspectResponse {
-  ok: true;
-  mode: "inspect";
-  fileName: string;
   marketplaces: SheetOption[];
   unrecognisedSheets: string[];
   sheetNames: string[];
   master: { rows: number; withEan: number; active: number } | null;
 }
 
-interface FailureResponse {
-  ok: false;
-  error: string;
+/** Spawns the parser worker. Kept here so both callers build it the same way. */
+function createImportWorker(): Worker {
+  return new Worker(new URL("../../lib/excel/import-worker.ts", import.meta.url), {
+    type: "module",
+  });
+}
+
+/**
+ * Runs one worker job to completion.
+ *
+ * The worker is terminated either way, which is also what discards the workbook:
+ * the bytes live in that thread and nowhere else, so ending it is the cleanup.
+ */
+function runWorker(
+  request: { type: "inspect"; file: ArrayBuffer } | {
+    type: "process";
+    file: ArrayBuffer;
+    sheets: string[];
+    year: number | null;
+  },
+  onProgress: (message: WorkerResponse) => void,
+): Promise<WorkerResponse> {
+  return new Promise((resolve, reject) => {
+    const worker = createImportWorker();
+
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const message = event.data;
+      if (
+        message.type === "inspected" ||
+        message.type === "compacted" ||
+        message.type === "failed"
+      ) {
+        worker.terminate();
+        resolve(message);
+        return;
+      }
+      onProgress(message);
+    };
+
+    worker.onerror = (event) => {
+      worker.terminate();
+      reject(new Error(event.message || "The workbook could not be read."));
+    };
+
+    worker.postMessage(request, [request.file]);
+  });
 }
 
 type SheetState =
@@ -116,15 +168,24 @@ export function UploadFlow() {
     setReading(true);
 
     try {
-      const body = new FormData();
-      body.set("file", picked);
-      const response = await fetch("/api/imports", { method: "POST", body });
-      const result = (await response.json()) as InspectResponse | FailureResponse;
+      // Read in the browser, not uploaded. A ten-megabyte workbook exceeds what
+      // a serverless function will accept as a request body, and inspecting it
+      // here means the file never needs to travel at all.
+      const buffer = await picked.arrayBuffer();
+      const message = await runWorker({ type: "inspect", file: buffer }, () => {});
 
-      if (!result.ok) {
-        setError(friendlyError(result.error));
+      if (message.type === "failed") {
+        setError(friendlyError(message.error));
         return;
       }
+      if (message.type !== "inspected") return;
+
+      const result: InspectResponse = {
+        marketplaces: message.marketplaces,
+        unrecognisedSheets: message.unrecognisedSheets,
+        sheetNames: message.sheetNames,
+        master: message.master,
+      };
 
       if (result.marketplaces.length === 0) {
         setError({
@@ -159,102 +220,107 @@ export function UploadFlow() {
     );
 
     try {
-      const body = new FormData();
-      body.set("file", file);
-      body.set("sheets", sheets.join(","));
+      // The workbook is parsed and reduced here, in a worker. Only the
+      // reduction crosses the network — see `lib/report/compact.ts`.
+      const buffer = await file.arrayBuffer();
+      const message = await runWorker(
+        { type: "process", file: buffer, sheets, year: null },
+        (progress) => {
+          if (progress.type === "sheet-started") {
+            setSheetStates((current) => ({
+              ...current,
+              [progress.sheet]: { stage: "parsing" },
+            }));
+          } else if (progress.type === "sheet-parsed") {
+            setSheetStates((current) => ({
+              ...current,
+              [progress.sheet]: { stage: "parsed", rows: progress.rows, period: null },
+            }));
+          } else if (progress.type === "sheet-completed") {
+            setSheetStates((current) => ({
+              ...current,
+              [progress.sheet]: {
+                stage: "done",
+                rows: progress.rows,
+                period: progress.period,
+                erpConfigured: false,
+              },
+            }));
+          } else if (progress.type === "sheet-failed") {
+            setSheetStates((current) => ({
+              ...current,
+              [progress.sheet]: { stage: "failed", error: progress.error },
+            }));
+          }
+        },
+      );
 
-      const response = await fetch("/api/imports", { method: "POST", body });
+      if (message.type === "failed") {
+        setError(friendlyError(message.error));
+        setProcessing(false);
+        return;
+      }
+      if (message.type !== "compacted") return;
 
-      if (!response.ok || !response.body) {
-        const text = await response.text();
-        setError(friendlyError(text || "The workbook could not be processed."));
+      const compacted: CompactSheet[] = message.sheets;
+      if (compacted.length === 0) {
+        setError({
+          message: "No sheet in this workbook could be read.",
+          hint: "Check the file, or try a different export.",
+        });
         setProcessing(false);
         return;
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      // `snapshotId` is what the stream publishes — see `ProgressEvent` in
-      // `report/build-snapshot.ts`. Reading `importId` here meant the id was
-      // always undefined, so a finished import reported that it could not be
-      // saved and the saved report was never opened.
-      let snapshotId: string | null = null;
+      const convex = getBrowserConvexClient();
+      if (!convex) {
+        setError({
+          message: "The report could not be saved.",
+          hint: "This deployment has no Convex connection configured.",
+        });
+        setProcessing(false);
+        return;
+      }
 
-      // Newline-delimited JSON: each line is one completed step, so the screen
-      // reflects real state rather than an animation.
+      // Every sheet moves to "saving" together: from here the work is one
+      // Convex job covering all of them, not a per-sheet step.
+      setSheetStates((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([sheet, state]) => [
+            sheet,
+            state.stage === "done"
+              ? { stage: "saving" as const, rows: state.rows }
+              : state,
+          ]),
+        ),
+      );
+
+      const snapshotId = (await convex.mutation("imports:start" as never, {
+        sourceFileName: file.name,
+        sheets: compacted,
+      } as never)) as string;
+
+      // The mutation returns as soon as the job is scheduled. What follows is
+      // the real status of that job, read from the snapshot itself — never a
+      // timer pretending to know how far along the ERP reads are.
       for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const snapshot = (await convex.query("snapshots:get" as never, {
+          snapshotId,
+        } as never)) as { status: string; errorMessage: string | null } | null;
 
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let event: Record<string, unknown>;
-          try {
-            event = JSON.parse(line) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-
-          if (event.type === "session") {
-            snapshotId = (event.snapshotId as string | null) ?? null;
-          } else if (event.type === "fatal") {
-            setError(friendlyError(String(event.error)));
-            setProcessing(false);
-            return;
-          } else if (event.type === "sheet") {
-            const sheet = String(event.sheet);
-            const stage = String(event.stage);
-            setSheetStates((current) => ({
-              ...current,
-              [sheet]:
-                stage === "failed"
-                  ? { stage: "failed", error: String(event.error) }
-                  : stage === "done"
-                    ? {
-                        stage: "done",
-                        rows: Number(event.rows ?? 0),
-                        period:
-                          (event.period as { from: string; to: string } | null) ?? null,
-                        erpConfigured: Boolean(event.erpConfigured),
-                      }
-                    : stage === "parsed"
-                      ? {
-                          stage: "parsed",
-                          rows: Number(event.rows ?? 0),
-                          period:
-                            (event.period as { from: string; to: string } | null) ?? null,
-                        }
-                      : stage === "saving"
-                        ? { stage: "saving", rows: Number(event.rows ?? 0) }
-                        : { stage: "parsing" },
-            }));
-          } else if (event.type === "done") {
-            const finalId = (event.snapshotId as string | null) ?? snapshotId;
-            if (Number(event.completed) === 0) {
-              setError({
-                message: "No sheet in this workbook could be read.",
-                hint: "Check the file, or try a different export.",
-              });
-              setProcessing(false);
-              return;
-            }
-            if (finalId) {
-              router.push(`/?report=${finalId}`);
-              router.refresh();
-            } else {
-              setError({
-                message: "The workbook was read but could not be saved.",
-                hint: "Nothing was lost — try again in a moment.",
-              });
-              setProcessing(false);
-            }
-            return;
-          }
+        if (!snapshot) continue;
+        if (snapshot.status === "completed") {
+          router.push(`/?report=${snapshotId}`);
+          router.refresh();
+          return;
+        }
+        if (snapshot.status === "failed") {
+          setError(
+            friendlyError(snapshot.errorMessage ?? "The report could not be built."),
+          );
+          setProcessing(false);
+          return;
         }
       }
     } catch (cause) {
