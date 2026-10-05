@@ -1,16 +1,14 @@
 import Image from "next/image";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { DataQualityPanel } from "@/components/soh/data-quality-panel";
 import { MarketplacePeriods } from "@/components/soh/marketplace-periods";
+import { ReportList } from "@/components/soh/report-list";
 import { ReportShell } from "@/components/soh/report-shell";
 import { ReportView } from "@/components/soh/report-view";
 import { UploadFlow } from "@/components/soh/upload-flow";
-import {
-  listSnapshots,
-  loadSnapshot,
-  type SnapshotListing,
-} from "@/lib/report/snapshot-view";
+import { listSnapshots, loadSnapshot } from "@/lib/report/snapshot-view";
 import { REPORT_TITLE } from "@/lib/report/vocabulary";
 
 export const metadata = { title: `${REPORT_TITLE} · Healthy Master` };
@@ -31,24 +29,6 @@ function single(value: string | string[] | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function shortDay(day: string): string {
-  const date = new Date(`${day}T00:00:00.000Z`);
-  return Number.isNaN(date.getTime())
-    ? day
-    : date.toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        timeZone: "UTC",
-      });
-}
-
-function describe(snapshot: SnapshotListing): string {
-  if (snapshot.marketplaces.length === 0) return "No marketplace";
-  if (snapshot.marketplaces.length === 1) return snapshot.marketplaces[0]!;
-  return `All marketplaces`;
-}
-
 function Brand({ size = 22 }: { size?: number }) {
   return (
     <span className="flex items-center gap-2.5">
@@ -66,6 +46,7 @@ export default async function HomePage({
   const params = await searchParams;
   const requested = single(params.report) ?? null;
   const wantsUpload = single(params.upload) === "1";
+  const wasDeleted = single(params.deleted) === "1";
 
   const snapshots = await listSnapshots();
   const usable = snapshots.filter((entry) => entry.status === "completed");
@@ -74,7 +55,12 @@ export default async function HomePage({
   if (requested && !wantsUpload) {
     const snapshot = await loadSnapshot(requested);
 
-    if (!snapshot || snapshot.status !== "completed") {
+    // Gone entirely — deleted, most likely from this list in another tab. Send
+    // the reader to the list rather than leaving them on a URL that can only
+    // ever fail now, and say what happened when they land.
+    if (!snapshot) redirect("/?deleted=1");
+
+    if (snapshot.status !== "completed") {
       return (
         <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-4 px-6 py-24">
           <Brand />
@@ -82,7 +68,9 @@ export default async function HomePage({
             Unable to open this report
           </h1>
           <p className="text-[13px] text-zinc-500">
-            It may have been deleted.
+            {snapshot.status === "processing"
+              ? "It is still being built."
+              : "It did not finish."}
           </p>
           <Link
             href="/"
@@ -145,6 +133,13 @@ export default async function HomePage({
           <h1 className="text-[22px] leading-tight font-semibold tracking-tight text-zinc-900">
             {REPORT_TITLE}
           </h1>
+          {/* Deleting the last saved report lands here. Without this the screen
+              looks like a first visit, as though the delete had not happened. */}
+          {wasDeleted ? (
+            <p aria-live="polite" className="text-[12px] text-zinc-500">
+              Report deleted
+            </p>
+          ) : null}
         </div>
 
         <UploadFlow />
@@ -179,40 +174,10 @@ export default async function HomePage({
         </Link>
       </div>
 
-      <ul className="border border-zinc-200 bg-white">
-        {usable.map((snapshot) => (
-          <li
-            key={snapshot.id}
-            className="flex items-center gap-4 border-b border-zinc-100 px-4 py-2.5 last:border-0"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-medium text-zinc-900 capitalize">
-                {describe(snapshot)}
-              </p>
-              <p className="mt-0.5 text-[12px] text-zinc-500">
-                {snapshot.periodStart && snapshot.periodEnd
-                  ? `${shortDay(snapshot.periodStart)} – ${shortDay(snapshot.periodEnd)}`
-                  : snapshot.periodsDiffer
-                    ? "Multiple periods"
-                    : "No period"}
-              </p>
-            </div>
-            <span className="shrink-0 text-[12px] text-zinc-400">
-              {new Date(snapshot.createdAt).toLocaleDateString("en-GB", {
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-              })}
-            </span>
-            <Link
-              href={`/?report=${snapshot.id}`}
-              className="shrink-0 rounded border border-zinc-200 px-3 py-1 text-[12px] font-medium text-zinc-700 hover:bg-zinc-50"
-            >
-              Open
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <ReportList
+        snapshots={usable}
+        initialStatus={wasDeleted ? { tone: "ok", text: "Report deleted" } : null}
+      />
     </main>
   );
 }

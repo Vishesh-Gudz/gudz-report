@@ -238,11 +238,49 @@ export const rowsFor = query({
   },
 });
 
-/** Deletes a snapshot and its rows. The only way a snapshot ever changes. */
+/**
+ * Deletes a snapshot and everything written beneath it.
+ *
+ * The only operation that changes a saved report — and it is a whole-record
+ * delete, not an edit. A snapshot's numbers are the reason it was saved, so
+ * there is nothing to amend in one, only to discard.
+ *
+ * Children go before the parent, each found through its `by_snapshotId` index,
+ * so no row is left pointing at a snapshot that no longer exists. Both child
+ * tables are swept by that index alone and not by marketplace, which is what
+ * makes the sweep total: a row belonging to a marketplace the snapshot no
+ * longer lists is still that snapshot's row and still goes.
+ *
+ * Atomic because a Convex mutation is one transaction. Either every row, every
+ * marketplace standing and the snapshot itself are gone, or nothing is — there
+ * is no outcome where a report half exists. That is also why this stays a
+ * single mutation rather than a batched or scheduled sweep: the aggregate is a
+ * few hundred rows by construction, small enough that keeping the delete
+ * indivisible costs nothing.
+ *
+ * `marketplaces` and `productMappings` are deliberately untouched. Those are
+ * standing decisions — which GSTINs are Blinkit, which ERP item a product is —
+ * that every later report reuses. Deleting a report must never cost somebody
+ * their mapping work.
+ *
+ * Idempotent. A snapshot that is already gone is the outcome the caller asked
+ * for, so a repeat — a double click, a retried request — reports `deleted:
+ * false` instead of failing. The child sweep still runs in that case, because
+ * the one way orphans could exist is an earlier attempt that did not commit.
+ */
 export const remove = mutation({
   args: { snapshotId: v.id("reportSnapshots") },
-  returns: v.null(),
+  returns: v.object({
+    deleted: v.boolean(),
+    rows: v.number(),
+    marketplaces: v.number(),
+  }),
   handler: async (ctx, args) => {
+    // `v.id("reportSnapshots")` is the scope check: an id belonging to another
+    // table, or malformed, is rejected before the handler runs. Nothing here
+    // reads a table name or a filter from the caller.
+    const snapshot = await ctx.db.get(args.snapshotId);
+
     const rows = await ctx.db
       .query("snapshotRows")
       .withIndex("by_snapshotId", (q) => q.eq("snapshotId", args.snapshotId))
@@ -255,7 +293,12 @@ export const remove = mutation({
       .collect();
     for (const entry of marketplaces) await ctx.db.delete(entry._id);
 
-    await ctx.db.delete(args.snapshotId);
-    return null;
+    if (snapshot) await ctx.db.delete(args.snapshotId);
+
+    return {
+      deleted: snapshot !== null,
+      rows: rows.length,
+      marketplaces: marketplaces.length,
+    };
   },
 });
