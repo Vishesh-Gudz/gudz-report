@@ -8,7 +8,6 @@
  * @module
  */
 
-import type * as files from "../files.js";
 import type * as imports from "../imports.js";
 import type * as importsRunner from "../importsRunner.js";
 import type * as marketplaces from "../marketplaces.js";
@@ -22,7 +21,6 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  files: typeof files;
   imports: typeof imports;
   importsRunner: typeof importsRunner;
   marketplaces: typeof marketplaces;
