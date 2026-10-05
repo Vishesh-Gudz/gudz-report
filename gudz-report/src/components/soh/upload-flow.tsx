@@ -175,7 +175,11 @@ export function UploadFlow() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let importId: string | null = null;
+      // `snapshotId` is what the stream publishes — see `ProgressEvent` in
+      // `report/build-snapshot.ts`. Reading `importId` here meant the id was
+      // always undefined, so a finished import reported that it could not be
+      // saved and the saved report was never opened.
+      let snapshotId: string | null = null;
 
       // Newline-delimited JSON: each line is one completed step, so the screen
       // reflects real state rather than an animation.
@@ -197,7 +201,7 @@ export function UploadFlow() {
           }
 
           if (event.type === "session") {
-            importId = (event.importId as string | null) ?? null;
+            snapshotId = (event.snapshotId as string | null) ?? null;
           } else if (event.type === "fatal") {
             setError(friendlyError(String(event.error)));
             setProcessing(false);
@@ -230,7 +234,7 @@ export function UploadFlow() {
                         : { stage: "parsing" },
             }));
           } else if (event.type === "done") {
-            const finalId = (event.importId as string | null) ?? importId;
+            const finalId = (event.snapshotId as string | null) ?? snapshotId;
             if (Number(event.completed) === 0) {
               setError({
                 message: "No sheet in this workbook could be read.",
@@ -240,7 +244,7 @@ export function UploadFlow() {
               return;
             }
             if (finalId) {
-              router.push(`/?importId=${finalId}`);
+              router.push(`/?report=${finalId}`);
               router.refresh();
             } else {
               setError({
